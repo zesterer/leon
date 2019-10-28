@@ -67,6 +67,13 @@ impl SrcRegion {
         }
     }
 
+    pub fn extend_to(self, limit: SrcLoc) -> Self {
+        match self {
+            SrcRegion::None => SrcRegion::None,
+            SrcRegion::Range(from, until) => SrcRegion::Range(from, until.max(limit)),
+        }
+    }
+
     pub fn union(self, other: Self) -> Self {
         match (self, other) {
             (SrcRegion::None, _) => SrcRegion::None,
