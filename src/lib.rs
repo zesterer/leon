@@ -7,12 +7,14 @@ mod util;
 use util::SrcRegion;
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum ErrorKind {
     UnexpectedChar(char),
     UnknownOperator(String),
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Error {
     kind: ErrorKind,
     region: Option<SrcRegion>,
@@ -35,10 +37,7 @@ impl Error {
 
 impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
-        Self {
-            kind,
-            region: None,
-        }
+        Self { kind, region: None }
     }
 }
 

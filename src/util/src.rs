@@ -1,6 +1,10 @@
 use std::fmt;
 
 #[derive(Copy, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
+#[cfg(test)]
+pub struct SrcLoc(pub usize);
+#[cfg(not(test))]
 pub struct SrcLoc(usize);
 
 impl SrcLoc {
@@ -45,6 +49,7 @@ impl From<usize> for SrcLoc {
 }
 
 #[derive(Copy, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum SrcRegion {
     None,
     Range(SrcLoc, SrcLoc),
@@ -78,8 +83,9 @@ impl SrcRegion {
         match (self, other) {
             (SrcRegion::None, _) => SrcRegion::None,
             (_, SrcRegion::None) => SrcRegion::None,
-            (SrcRegion::Range(from_a, until_a), SrcRegion::Range(from_b, until_b)) =>
-                SrcRegion::Range(from_a.min(from_b), until_a.max(until_b)),
+            (SrcRegion::Range(from_a, until_a), SrcRegion::Range(from_b, until_b)) => {
+                SrcRegion::Range(from_a.min(from_b), until_a.max(until_b))
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 use crate::{
-    Error,
     lex::{Token, TokenCtx},
     util::Interned,
+    Error,
 };
 
 pub enum Literal {
@@ -44,10 +44,7 @@ pub enum TernaryOp {
 pub enum Expr {
     Literal(Literal),
     Ident(Interned<String>),
-    Call {
-        func: Box<Expr>,
-        args: Vec<Expr>,
-    },
+    Call { func: Box<Expr>, args: Vec<Expr> },
     UnaryOp(UnaryOp, Box<Expr>),
     BinaryOp(BinaryOp, [Box<Expr>; 2]),
     TernaryOp(TernaryOp, [Box<Expr>; 3]),
@@ -68,15 +65,10 @@ impl Expr {
 }
 
 pub fn parse(tokens: &[Token]) -> Result<Expr, Vec<Error>> {
-    parse_expr(
-        &mut tokens
-            .iter()
-            .copied()
-    )
-        .map_err(|e| vec![e])
+    parse_expr(&mut tokens.iter().copied()).map_err(|e| vec![e])
 }
 
-trait TokenIter = Iterator<Item=Token> + Clone;
+trait TokenIter = Iterator<Item = Token> + Clone;
 
 fn parse_expr(tokens: &mut impl TokenIter) -> Result<Expr, Error> {
     unimplemented!()
