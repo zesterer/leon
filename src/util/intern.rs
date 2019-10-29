@@ -1,14 +1,12 @@
-use std::{
-    collections::HashMap,
-    marker::PhantomData,
-    cmp::PartialEq,
-};
+use std::{cmp::PartialEq, collections::HashMap, marker::PhantomData};
 
 #[cfg_attr(test, derive(PartialEq, Debug))]
 pub struct Interned<T>(usize, PhantomData<T>);
 impl<T> Copy for Interned<T> {}
 impl<T> Clone for Interned<T> {
-    fn clone(&self) -> Self { Self(self.0, PhantomData) }
+    fn clone(&self) -> Self {
+        Self(self.0, PhantomData)
+    }
 }
 
 #[derive(Default)]
@@ -19,15 +17,14 @@ pub struct InternTable<T: Eq> {
 
 impl<T: Eq> InternTable<T> {
     pub fn get(&self, key: Interned<T>) -> &T {
-        self.items
-            .get(key.0)
-            .expect("Cannot locate interned item")
+        self.items.get(key.0).expect("Cannot locate interned item")
     }
 
     pub fn intern(&mut self, item: impl Into<T>) -> Interned<T> {
         let item = item.into();
 
-        let idx = self.items
+        let idx = self
+            .items
             .iter()
             .enumerate()
             .find(|(_, x)| x == &&item)

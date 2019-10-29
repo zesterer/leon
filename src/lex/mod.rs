@@ -1,10 +1,8 @@
-use std::{
-    fmt,
-};
 use crate::{
+    util::{InternTable, Interned, SrcLoc, SrcRegion},
     Error,
-    util::{Interned, InternTable, SrcLoc, SrcRegion},
 };
+use std::fmt;
 
 #[derive(Copy, Clone)]
 #[cfg_attr(test, derive(PartialEq, Debug))]
@@ -94,10 +92,7 @@ pub struct Token {
 
 impl Token {
     pub fn new(lexeme: Lexeme, region: SrcRegion) -> Self {
-        Self {
-            lexeme,
-            region,
-        }
+        Self { lexeme, region }
     }
 
     pub fn print_debug(&self, ctx: &TokenCtx) {
@@ -140,9 +135,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
 
     impl OpState {
         pub fn empty() -> Self {
-            Self {
-                chars: Vec::new(),
-            }
+            Self { chars: Vec::new() }
         }
 
         pub fn push_char(&mut self, c: char, loc: SrcLoc) -> Option<Token> {
@@ -151,42 +144,50 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                     let tok = Token::new(Lexeme::AddEq, SrcRegion::range(*start, loc));
                     self.chars.clear();
                     Some(tok)
-                },
+                }
                 ([('-', start)], '=') => {
                     let tok = Token::new(Lexeme::SubEq, SrcRegion::range(*start, loc));
                     self.chars.clear();
                     Some(tok)
-                },
+                }
                 ([('=', start)], '=') => {
                     let tok = Token::new(Lexeme::EqEq, SrcRegion::range(*start, loc));
                     self.chars.clear();
                     Some(tok)
-                },
+                }
                 ([(o, start)], _) if is_singular(*o).is_some() => {
                     let tok = Token::new(is_singular(*o).unwrap(), SrcRegion::range(*start, loc));
                     self.chars.clear();
                     self.chars.push((c, loc));
                     Some(tok)
-                },
+                }
                 _ => {
                     self.chars.push((c, loc));
                     None
-                },
+                }
             }
         }
 
         pub fn finish(&mut self) -> Option<Result<Token, Error>> {
             match self.chars.as_slice() {
                 [(o, start)] if is_singular(*o).is_some() => {
-                    let tok = Token::new(is_singular(*o).unwrap(), SrcRegion::range(*start, start.next()));
+                    let tok = Token::new(
+                        is_singular(*o).unwrap(),
+                        SrcRegion::range(*start, start.next()),
+                    );
                     Some(Ok(tok))
-                },
+                }
                 [] => None,
                 _ => {
                     let s = self.chars.iter().map(|(c, _)| *c).collect();
-                    let region = self.chars.iter().fold(SrcRegion::single(self.chars[0].1), |a, (_, r)| a.extend_to(*r));
+                    let region = self
+                        .chars
+                        .iter()
+                        .fold(SrcRegion::single(self.chars[0].1), |a, (_, r)| {
+                            a.extend_to(*r)
+                        });
                     Some(Err(Error::unknown_operator(s).at(region)))
-                },
+                }
             }
         }
     }
@@ -223,7 +224,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
         let mut to_next = true;
         match &mut state {
             State::Default => match c {
-                Some(c) if c.is_whitespace() => {},
+                Some(c) if c.is_whitespace() => {}
                 Some('{') => tokens.push(Token::new(Lexeme::LBrace, SrcRegion::single(loc))),
                 Some('}') => tokens.push(Token::new(Lexeme::RBrace, SrcRegion::single(loc))),
                 Some('(') => tokens.push(Token::new(Lexeme::LParen, SrcRegion::single(loc))),
@@ -232,25 +233,30 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                 Some(']') => tokens.push(Token::new(Lexeme::RBrack, SrcRegion::single(loc))),
                 Some(';') => tokens.push(Token::new(Lexeme::Semicolon, SrcRegion::single(loc))),
                 Some('"') => state = State::String(loc, String::new()),
-                Some(c) if c.is_alphabetic() || c == '_' => state = State::Ident(loc, Some(c).iter().collect()),
+                Some(c) if c.is_alphabetic() || c == '_' => {
+                    state = State::Ident(loc, Some(c).iter().collect())
+                }
                 Some(c) if c.is_numeric() => state = State::Number(loc, Some(c).iter().collect()),
                 Some(c) if is_operator_part(c) => {
                     to_next = false;
                     state = State::Operator(loc, OpState::empty());
-                },
+                }
                 Some(c) => errors.push(Error::unexpected_char(c).at(SrcRegion::single(loc))),
                 None => break,
             },
             State::String(start, string) => match c {
                 Some('"') => {
-                    tokens.push(Token::new(Lexeme::String(strings.intern(string.clone())), SrcRegion::range(*start, loc.next())));
+                    tokens.push(Token::new(
+                        Lexeme::String(strings.intern(string.clone())),
+                        SrcRegion::range(*start, loc.next()),
+                    ));
                     state = State::Default;
-                },
+                }
                 Some(c) => string.push(c),
                 None => {
                     to_next = false;
                     state = State::Default;
-                },
+                }
             },
             State::Ident(start, ident) => match c {
                 Some(c) if c.is_alphanumeric() || c == '_' => ident.push(c),
@@ -268,31 +274,34 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                     tokens.push(Token::new(lexeme, SrcRegion::range(*start, loc.next())));
                     to_next = false;
                     state = State::Default;
-                },
+                }
             },
             State::Number(start, number) => match c {
                 Some(c) if c.is_alphanumeric() || c == '_' => number.push(c),
                 _ => {
-                    tokens.push(Token::new(Lexeme::Number(numbers.intern(number.clone())), SrcRegion::range(*start, loc.next())));
+                    tokens.push(Token::new(
+                        Lexeme::Number(numbers.intern(number.clone())),
+                        SrcRegion::range(*start, loc.next()),
+                    ));
                     to_next = false;
                     state = State::Default;
-                },
+                }
             },
             State::Operator(start, op_state) => match c {
                 Some(c) if is_operator_part(c) => {
                     if let Some(tok) = op_state.push_char(c, loc) {
                         tokens.push(tok);
                     }
-                },
+                }
                 _ => {
                     match op_state.finish() {
                         Some(Ok(token)) => tokens.push(token),
                         Some(Err(err)) => errors.push(err),
-                        None => {},
+                        None => {}
                     }
                     to_next = false;
                     state = State::Default;
-                },
+                }
             },
         }
 
@@ -303,11 +312,14 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
     }
 
     if errors.len() == 0 {
-        Ok((tokens, TokenCtx {
-            idents,
-            strings,
-            numbers,
-        }))
+        Ok((
+            tokens,
+            TokenCtx {
+                idents,
+                strings,
+                numbers,
+            },
+        ))
     } else {
         Err(errors)
     }
@@ -315,7 +327,6 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
 
 #[test]
 fn test_lex() {
-
     use std::marker::PhantomData;
 
     assert_eq!(
@@ -344,14 +355,17 @@ fn test_lex() {
                 Token {
                     lexeme: Lexeme::RParen,
                     region: SrcRegion::range(SrcLoc(23), SrcLoc(24)),
-                }
+                },
             ];
 
-            (tokens, TokenCtx {
-                idents,
-                strings,
-                numbers: InternTable::default(),
-            })
+            (
+                tokens,
+                TokenCtx {
+                    idents,
+                    strings,
+                    numbers: InternTable::default(),
+                },
+            )
         }),
     );
 }

@@ -1,9 +1,5 @@
-use std::{
-    env,
-    fs::File,
-    io::Read,
-};
 use leon::Engine;
+use std::{env, fs::File, io::Read};
 
 fn main() {
     for arg in env::args().skip(1) {
@@ -13,8 +9,6 @@ fn main() {
             .read_to_string(&mut buf)
             .unwrap_or_else(|err| panic!("Could not read file '{}': {:?}", arg, err));
 
-        Engine::default()
-            .execute(&buf)
-            .unwrap();
+        Engine::default().execute(&buf).unwrap();
     }
 }

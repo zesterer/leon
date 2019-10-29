@@ -37,10 +37,7 @@ impl Error {
 
 impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
-        Self {
-            kind,
-            region: None,
-        }
+        Self { kind, region: None }
     }
 }
 
