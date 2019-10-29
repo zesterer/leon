@@ -21,6 +21,10 @@ pub enum Lexeme {
 
     Semicolon,
 
+    Dot,
+    DotDot,
+
+    Not,
     Add,
     Sub,
     Mul,
@@ -32,7 +36,12 @@ pub enum Lexeme {
     DivEq,
     RemEq,
     Eq,
+    Less,
+    Greater,
     EqEq,
+    NotEq,
+    LessEq,
+    GreaterEq,
 
     Let,
     Var,
@@ -59,6 +68,10 @@ impl Lexeme {
 
             Lexeme::Semicolon => ";",
 
+            Lexeme::Dot => ".",
+            Lexeme::DotDot => "..",
+
+            Lexeme::Not => "!",
             Lexeme::Add => "+",
             Lexeme::Sub => "-",
             Lexeme::Mul => "*",
@@ -71,7 +84,12 @@ impl Lexeme {
             Lexeme::RemEq => "%=",
 
             Lexeme::Eq => "=",
+            Lexeme::Less => "<",
+            Lexeme::Greater => ">",
             Lexeme::EqEq => "==",
+            Lexeme::NotEq => "!=",
+            Lexeme::LessEq => "<=",
+            Lexeme::GreaterEq => ">=",
 
             Lexeme::Let => "let",
             Lexeme::Var => "var",
@@ -121,12 +139,16 @@ impl TokenCtx {
 pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
     fn is_singular(c: char) -> Option<Lexeme> {
         Some(match c {
+            '.' => Lexeme::Dot,
+            '!' => Lexeme::Not,
             '+' => Lexeme::Add,
             '-' => Lexeme::Sub,
             '*' => Lexeme::Mul,
             '/' => Lexeme::Div,
             '%' => Lexeme::Rem,
             '=' => Lexeme::Eq,
+            '<' => Lexeme::Less,
+            '>' => Lexeme::Greater,
             _ => return None,
         })
     }
@@ -144,6 +166,11 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
 
         pub fn push_char(&mut self, c: char, loc: SrcLoc) -> Option<Token> {
             match (self.chars.as_slice(), c) {
+                ([('.', start)], '.') => {
+                    let tok = Token::new(Lexeme::DotDot, SrcRegion::range(*start, loc));
+                    self.chars.clear();
+                    Some(tok)
+                },
                 ([('+', start)], '=') => {
                     let tok = Token::new(Lexeme::AddEq, SrcRegion::range(*start, loc));
                     self.chars.clear();
@@ -154,8 +181,38 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                     self.chars.clear();
                     Some(tok)
                 },
+                ([('*', start)], '=') => {
+                    let tok = Token::new(Lexeme::MulEq, SrcRegion::range(*start, loc));
+                    self.chars.clear();
+                    Some(tok)
+                },
+                ([('/', start)], '=') => {
+                    let tok = Token::new(Lexeme::DivEq, SrcRegion::range(*start, loc));
+                    self.chars.clear();
+                    Some(tok)
+                },
+                ([('%', start)], '=') => {
+                    let tok = Token::new(Lexeme::RemEq, SrcRegion::range(*start, loc));
+                    self.chars.clear();
+                    Some(tok)
+                },
                 ([('=', start)], '=') => {
                     let tok = Token::new(Lexeme::EqEq, SrcRegion::range(*start, loc));
+                    self.chars.clear();
+                    Some(tok)
+                },
+                ([('!', start)], '=') => {
+                    let tok = Token::new(Lexeme::NotEq, SrcRegion::range(*start, loc));
+                    self.chars.clear();
+                    Some(tok)
+                },
+                ([('<', start)], '=') => {
+                    let tok = Token::new(Lexeme::LessEq, SrcRegion::range(*start, loc));
+                    self.chars.clear();
+                    Some(tok)
+                },
+                ([('>', start)], '=') => {
+                    let tok = Token::new(Lexeme::GreaterEq, SrcRegion::range(*start, loc));
                     self.chars.clear();
                     Some(tok)
                 },
@@ -190,10 +247,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
 
     fn is_operator_part(c: char) -> bool {
         match c {
-            '+' | '-' => true,
-            '*' | '/' => true,
-            '&' | '|' => true,
-            '!' | '=' => true,
+            '.' | '+' | '-' | '*' | '/' | '&' | '|' | '!' | '=' | '<' | '>' => true,
             _ => false,
         }
     }
