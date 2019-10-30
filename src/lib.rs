@@ -6,15 +6,13 @@ mod util;
 
 use util::SrcRegion;
 
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[derive(Debug, PartialEq)]
 pub enum ErrorKind {
     UnexpectedChar(char),
     UnknownOperator(String),
 }
 
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[derive(Debug, PartialEq)]
 pub struct Error {
     kind: ErrorKind,
     region: Option<SrcRegion>,

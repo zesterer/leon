@@ -4,8 +4,7 @@ use crate::{
 };
 use std::fmt;
 
-#[derive(Copy, Clone)]
-#[cfg_attr(test, derive(PartialEq, Debug))]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Lexeme {
     Ident(Interned<String>),
     String(Interned<String>),
@@ -83,8 +82,7 @@ impl Lexeme {
     }
 }
 
-#[derive(Copy, Clone)]
-#[cfg_attr(test, derive(PartialEq, Debug))]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Token {
     lexeme: Lexeme,
     region: SrcRegion,
@@ -100,7 +98,7 @@ impl Token {
     }
 }
 
-#[cfg_attr(test, derive(PartialEq, Debug))]
+#[derive(PartialEq, Debug)]
 pub struct TokenCtx {
     pub idents: InternTable<String>,
     pub strings: InternTable<String>,
