@@ -30,6 +30,10 @@ impl SrcLoc {
     pub fn next(self) -> Self {
         Self(self.0 + 1)
     }
+
+    pub fn later_than(self, other: Self) -> bool {
+        self.0 > other.0
+    }
 }
 
 impl fmt::Debug for SrcLoc {
@@ -88,6 +92,14 @@ impl SrcRegion {
             (SrcRegion::None, other) => other,
             (this, SrcRegion::None) => this,
             (this, _) => this,
+        }
+    }
+
+    pub fn later_than(self, other: Self) -> bool {
+        match (self, other) {
+            (SrcRegion::Range(from_a, until_a), SrcRegion::Range(from_b, until_b)) =>
+                until_a.later_than(until_b),
+            _ => false,
         }
     }
 

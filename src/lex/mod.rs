@@ -6,8 +6,10 @@ use crate::{
     util::{Interned, InternTable, SrcLoc, SrcRegion},
 };
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Lexeme {
+    Eof,
+
     Ident(Interned<String>),
     String(Interned<String>),
     Number(Interned<String>),
@@ -30,12 +32,12 @@ pub enum Lexeme {
     Mul,
     Div,
     Rem,
+    Eq,
     AddEq,
     SubEq,
     MulEq,
     DivEq,
     RemEq,
-    Eq,
     Less,
     Greater,
     EqEq,
@@ -50,11 +52,17 @@ pub enum Lexeme {
     While,
     For,
     Struct,
+
+    True,
+    False,
+    Null,
 }
 
 impl Lexeme {
     pub fn as_str<'a>(&self, ctx: &'a TokenCtx) -> &'a str {
         match self {
+            Lexeme::Eof => "EOF",
+
             Lexeme::Ident(i) => ctx.idents.get(*i),
             Lexeme::String(i) => ctx.strings.get(*i),
             Lexeme::Number(i) => ctx.numbers.get(*i),
@@ -77,13 +85,13 @@ impl Lexeme {
             Lexeme::Mul => "*",
             Lexeme::Div => "/",
             Lexeme::Rem => "%",
+            Lexeme::Eq => "=",
             Lexeme::AddEq => "+=",
             Lexeme::SubEq => "-=",
             Lexeme::MulEq => "*=",
             Lexeme::DivEq => "/=",
             Lexeme::RemEq => "%=",
 
-            Lexeme::Eq => "=",
             Lexeme::Less => "<",
             Lexeme::Greater => ">",
             Lexeme::EqEq => "==",
@@ -98,14 +106,18 @@ impl Lexeme {
             Lexeme::While => "while",
             Lexeme::For => "for",
             Lexeme::Struct => "struct",
+
+            Lexeme::True => "true",
+            Lexeme::False => "false",
+            Lexeme::Null => "null",
         }
     }
 }
 
 #[derive(Copy, Clone)]
 pub struct Token {
-    lexeme: Lexeme,
-    region: SrcRegion,
+    pub lexeme: Lexeme,
+    pub region: SrcRegion,
 }
 
 impl Token {
@@ -129,7 +141,6 @@ pub struct TokenCtx {
 
 impl TokenCtx {
     pub fn print_debug(&self, tokens: &[Token]) {
-        println!("--- Tokens ---");
         for token in tokens {
             token.print_debug(self);
         }
@@ -314,6 +325,9 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                         "while" => Lexeme::While,
                         "for" => Lexeme::For,
                         "struct" => Lexeme::Struct,
+                        "true" => Lexeme::True,
+                        "false" => Lexeme::False,
+                        "null" => Lexeme::Null,
                         _ => Lexeme::Ident(idents.intern(ident.clone())),
                     };
                     tokens.push(Token::new(lexeme, SrcRegion::range(*start, loc.next())));
@@ -352,6 +366,9 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
             loc = loc.next();
         }
     }
+
+    // EOF token
+    tokens.push(Token::new(Lexeme::Eof, SrcRegion::none()));
 
     if errors.len() == 0 {
         Ok((tokens, TokenCtx {
