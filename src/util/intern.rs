@@ -11,7 +11,7 @@ impl<T> Clone for Interned<T> {
     fn clone(&self) -> Self { Self(self.0, PhantomData) }
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq, Debug)]
 pub struct InternTable<T: Eq> {
     items: Vec<T>,
 }

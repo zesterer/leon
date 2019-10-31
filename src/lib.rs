@@ -9,14 +9,14 @@ use self::{
     lex::Lexeme,
 };
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Thing {
     Atom,
     Lexeme(Lexeme),
     Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ErrorKind {
     Spurious, // Never revealed to user
     UnexpectedChar(char),
@@ -25,7 +25,7 @@ pub enum ErrorKind {
     Expected(Thing),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Error {
     kind: ErrorKind,
     region: Option<SrcRegion>,
