@@ -16,8 +16,7 @@ pub enum Thing {
     Expr,
 }
 
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[derive(Debug, PartialEq)]
 pub enum ErrorKind {
     Spurious, // Never revealed to user
     UnexpectedChar(char),
@@ -26,8 +25,7 @@ pub enum ErrorKind {
     Expected(Thing),
 }
 
-#[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
+#[derive(Debug, PartialEq)]
 pub struct Error {
     kind: ErrorKind,
     region: Option<SrcRegion>,

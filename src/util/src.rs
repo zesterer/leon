@@ -52,8 +52,7 @@ impl From<usize> for SrcLoc {
     }
 }
 
-#[derive(Copy, Clone)]
-#[cfg_attr(test, derive(PartialEq))]
+#[derive(Copy, Clone, PartialEq)]
 pub enum SrcRegion {
     None,
     Range(SrcLoc, SrcLoc),
