@@ -96,6 +96,7 @@ pub enum Expr {
     Var(Node<Interned<String>>, Node<Expr>, Node<Expr>), // let foo = 5; bar
     ThisThen(Node<Expr>, Node<Expr>), // foo; bar
     IfElse(Node<Expr>, Node<Expr>, Node<Expr>),
+    While(Node<Expr>, Node<Expr>),
 }
 
 impl Expr {
@@ -127,6 +128,10 @@ impl Expr {
         Node::new(Expr::IfElse(predicate, true_block, false_block), region)
     }
 
+    pub fn while_loop(predicate: Node<Expr>, body: Node<Expr>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::While(predicate, body), region)
+    }
+
     fn print_debug_depth(&self, ctx: &TokenCtx, depth: usize) {
         (0..depth * 2).for_each(|_| print!("  "));
         match self {
@@ -156,6 +161,11 @@ impl Expr {
                 predicate.print_debug_depth(ctx, depth + 1);
                 true_block.print_debug_depth(ctx, depth + 1);
                 false_block.print_debug_depth(ctx, depth + 1);
+            },
+            Expr::While(predicate, body) => {
+                println!("While:");
+                predicate.print_debug_depth(ctx, depth + 1);
+                body.print_debug_depth(ctx, depth + 1);
             },
             _ => unimplemented!(),
         }
@@ -192,7 +202,7 @@ fn parse_block_body(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
         Ok((ident, expr)) => {
             parse_lexeme(Lexeme::Semicolon, tokens)?;
             let region = ident.region.union(expr.region);
-            Ok(Expr::var(ident, expr, parse_expr(tokens).unwrap_or(null), region))
+            Ok(Expr::var(ident, expr, parse_block_body(tokens).unwrap_or(null), region))
         },
         Err(_) => match parse_expr(tokens) {
             Ok(expr) => match parse_lexeme(Lexeme::Semicolon, tokens) {
@@ -339,14 +349,22 @@ fn parse_atom(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
         // If expressions
         .or_else(|e0| {
             parse_lexeme(Lexeme::If, tokens).map_err(|e1| e0.clone().max(e1))?;
-            let predicate = parse_expr(tokens)?;
-            let true_block = parse_block(tokens)?;
+            let predicate = parse_expr(tokens).map_err(|e1| e0.clone().max(e1))?;
+            let true_block = parse_block(tokens).map_err(|e1| e0.clone().max(e1))?;
             parse_lexeme(Lexeme::Else, tokens).map_err(|e1| e0.clone().max(e1))?;
-            let false_block = parse_block(tokens)?;
+            let false_block = parse_block(tokens).map_err(|e1| e0.clone().max(e1))?;
             let region = predicate.region
                 .union(true_block.region)
                 .union(false_block.region);
             Ok(Expr::if_else(predicate, true_block, false_block, region))
+        })
+        // While loops
+        .or_else(|e0: Error| {
+            parse_lexeme(Lexeme::While, tokens).map_err(|e1| e0.clone().max(e1))?;
+            let predicate = parse_expr(tokens).map_err(|e1| e0.clone().max(e1))?;
+            let body = parse_block(tokens).map_err(|e1| e0.clone().max(e1))?;
+            let region = predicate.region.union(body.region);
+            Ok(Expr::while_loop(predicate, body, region))
         })
 }
 
