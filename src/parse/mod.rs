@@ -87,19 +87,15 @@ pub enum BinaryOp {
     RemAssign,
 }
 
-pub enum TernaryOp {
-    If,
-}
-
 pub enum Expr {
     Literal(Literal),
     Ident(Interned<String>),
     Call(Node<Expr>, Vec<Node<Expr>>),
     Unary(Node<UnaryOp>, Node<Expr>),
-    Binary(Node<BinaryOp>, [Node<Expr>; 2]),
-    Ternary(Node<TernaryOp>, [Node<Expr>; 3]),
-    Var(Interned<String>, Node<Expr>, Node<Expr>), // let foo = 5; bar
+    Binary(Node<BinaryOp>, Node<Expr>, Node<Expr>),
+    Var(Node<Interned<String>>, Node<Expr>, Node<Expr>), // let foo = 5; bar
     ThisThen(Node<Expr>, Node<Expr>), // foo; bar
+    IfElse(Node<Expr>, Node<Expr>, Node<Expr>),
 }
 
 impl Expr {
@@ -116,11 +112,19 @@ impl Expr {
     }
 
     pub fn binary(op: Node<BinaryOp>, left: Node<Expr>, right: Node<Expr>, region: SrcRegion) -> Node<Self> {
-        Node::new(Expr::Binary(op, [left, right]), region)
+        Node::new(Expr::Binary(op, left, right), region)
     }
 
     pub fn this_then(this: Node<Expr>, then: Node<Expr>, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::ThisThen(this, then), region)
+    }
+
+    pub fn var(ident: Node<Interned<String>>, expr: Node<Expr>, then: Node<Expr>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::Var(ident, expr, then), region)
+    }
+
+    pub fn if_else(predicate: Node<Expr>, true_block: Node<Expr>, false_block: Node<Expr>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::IfElse(predicate, true_block, false_block), region)
     }
 
     fn print_debug_depth(&self, ctx: &TokenCtx, depth: usize) {
@@ -132,7 +136,7 @@ impl Expr {
                 println!("Unary Operation: {:?}", **op);
                 expr.print_debug_depth(ctx, depth + 1);
             },
-            Expr::Binary(op, [l, r]) => {
+            Expr::Binary(op, l, r) => {
                 println!("Binary Operation: {:?}", **op);
                 l.print_debug_depth(ctx, depth + 1);
                 r.print_debug_depth(ctx, depth + 1);
@@ -141,6 +145,17 @@ impl Expr {
                 println!("This, Then:");
                 this.print_debug_depth(ctx, depth + 1);
                 then.print_debug_depth(ctx, depth + 1);
+            },
+            Expr::Var(ident, expr, then) => {
+                println!("Var: {}", ctx.idents.get(**ident));
+                expr.print_debug_depth(ctx, depth + 1);
+                then.print_debug_depth(ctx, depth + 1);
+            },
+            Expr::IfElse(predicate, true_block, false_block) => {
+                println!("If/Else:");
+                predicate.print_debug_depth(ctx, depth + 1);
+                true_block.print_debug_depth(ctx, depth + 1);
+                false_block.print_debug_depth(ctx, depth + 1);
             },
             _ => unimplemented!(),
         }
@@ -172,13 +187,33 @@ fn parse_block(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
 }
 
 fn parse_block_body(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
-    match parse_expr(tokens) {
-        Ok(expr) => match parse_lexeme(Lexeme::Semicolon, tokens) {
-            Ok(()) => Ok(Expr::this_then(expr, parse_block_body(tokens)?, SrcRegion::none())),
-            Err(_) => Ok(expr),
+    let null = Expr::literal(Literal::Null, SrcRegion::none());
+    match parse_var(tokens) {
+        Ok((ident, expr)) => {
+            parse_lexeme(Lexeme::Semicolon, tokens)?;
+            let region = ident.region.union(expr.region);
+            Ok(Expr::var(ident, expr, parse_expr(tokens).unwrap_or(null), region))
         },
-        Err(_) => Ok(Expr::literal(Literal::Null, SrcRegion::none())),
+        Err(_) => match parse_expr(tokens) {
+            Ok(expr) => match parse_lexeme(Lexeme::Semicolon, tokens) {
+                Ok(()) => Ok(Expr::this_then(expr, parse_block_body(tokens)?, SrcRegion::none())),
+                Err(_) => Ok(expr),
+            },
+            Err(_) => Ok(null),
+        },
     }
+}
+
+fn parse_var(tokens: &mut impl TokenIter) -> Result<(Node<Interned<String>>, Node<Expr>), Error> {
+    parse_lexeme(Lexeme::Let, tokens)?;
+
+    let ident = parse_ident(tokens)?;
+
+    parse_lexeme(Lexeme::Eq, tokens)?;
+
+    let expr = parse_expr(tokens)?;
+
+    Ok((ident, expr))
 }
 
 fn parse_expr(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
@@ -286,7 +321,7 @@ fn parse_unary(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
 
 fn parse_atom(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
     // Atoms
-    let atom = try_parse(tokens, |tok, iter| match tok.lexeme {
+    try_parse(tokens, |tok, iter| match tok.lexeme {
         Lexeme::True => Ok(Expr::literal(Literal::Bool(true), tok.region)),
         Lexeme::False => Ok(Expr::literal(Literal::Bool(false), tok.region)),
         Lexeme::Null => Ok(Expr::literal(Literal::Null, tok.region)),
@@ -294,14 +329,25 @@ fn parse_atom(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
         Lexeme::Number(i) => Ok(Expr::literal(Literal::Number(i), tok.region)),
         Lexeme::Ident(i) => Ok(Expr::ident(i, tok.region)),
         _ => Err(Error::expected(Thing::Atom).at(tok.region)),
-    });
-
-    // Parenthesised expressions
-    match atom {
-        Ok(atom) => Ok(atom),
-        Err(e0) => parse_enclosed(Lexeme::LParen, Lexeme::RParen, tokens, parse_expr)
-            .map_err(|e1| e0.max(e1)),
-    }
+    })
+        // Parenthesised expressions
+        .or_else(|e0| parse_enclosed(Lexeme::LParen, Lexeme::RParen, tokens, parse_expr)
+            .map_err(|e1| e0.max(e1)))
+        // Blocks
+        .or_else(|e0| parse_block(tokens)
+            .map_err(|e1| e0.max(e1)))
+        // If expressions
+        .or_else(|e0| {
+            parse_lexeme(Lexeme::If, tokens).map_err(|e1| e0.clone().max(e1))?;
+            let predicate = parse_expr(tokens)?;
+            let true_block = parse_block(tokens)?;
+            parse_lexeme(Lexeme::Else, tokens).map_err(|e1| e0.clone().max(e1))?;
+            let false_block = parse_block(tokens)?;
+            let region = predicate.region
+                .union(true_block.region)
+                .union(false_block.region);
+            Ok(Expr::if_else(predicate, true_block, false_block, region))
+        })
 }
 
 fn parse_enclosed<I: TokenIter, R>(
@@ -325,6 +371,14 @@ fn parse_lexeme(lexeme: Lexeme, tokens: &mut impl TokenIter) -> Result<(), Error
         Ok(())
     } else {
         Err(Error::expected(Thing::Lexeme(lexeme)).at(tok.region))
+    })
+}
+
+fn parse_ident(tokens: &mut impl TokenIter) -> Result<Node<Interned<String>>, Error> {
+    try_parse(tokens, |tok, iter| if let Lexeme::Ident(ident) = tok.lexeme {
+        Ok(Node::new(ident, tok.region))
+    } else {
+        Err(Error::expected(Thing::Ident).at(tok.region))
     })
 }
 

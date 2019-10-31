@@ -1,1 +1,6 @@
-3;4
+let x = if true { 5 } else { 3 };
+
+3 + (5 + 7 * {
+	let foo = 10;
+	foo - 9
+})

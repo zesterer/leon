@@ -9,14 +9,15 @@ use self::{
     lex::Lexeme,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Thing {
     Atom,
     Lexeme(Lexeme),
+    Ident,
     Expr,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ErrorKind {
     Spurious, // Never revealed to user
     UnexpectedChar(char),
@@ -25,11 +26,12 @@ pub enum ErrorKind {
     Expected(Thing),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Error {
     kind: ErrorKind,
     region: Option<SrcRegion>,
     while_parsing: Vec<Thing>,
+    hint: Option<&'static str>,
 }
 
 impl Error {
@@ -63,6 +65,11 @@ impl Error {
         self
     }
 
+    pub fn hint(mut self, hint: &'static str) -> Self {
+        self.hint = Some(hint);
+        self
+    }
+
     pub fn max(self, other: Self) -> Self {
         match (self.region, other.region) {
             (Some(region_a), Some(region_b)) if region_a.later_than(region_b) => self,
@@ -77,6 +84,7 @@ impl From<ErrorKind> for Error {
             kind,
             region: None,
             while_parsing: Vec::new(),
+            hint: None,
         }
     }
 }
