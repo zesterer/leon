@@ -278,6 +278,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
         String(SrcLoc, String),
         Number(SrcLoc, String),
         Operator(SrcLoc, OpState),
+        LineComment,
     }
 
     let mut chars = s.chars();
@@ -297,6 +298,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                 Some(']') => tokens.push(Token::new(Lexeme::RBrack, SrcRegion::single(loc))),
                 Some(';') => tokens.push(Token::new(Lexeme::Semicolon, SrcRegion::single(loc))),
                 Some('"') => state = State::String(loc, String::new()),
+                Some('#') => state = State::LineComment,
                 Some(c) if c.is_alphabetic() || c == '_' => state = State::Ident(loc, Some(c).iter().collect()),
                 Some(c) if c.is_numeric() => state = State::Number(loc, Some(c).iter().collect()),
                 Some(c) if is_operator_part(c) => {
@@ -362,6 +364,10 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                     to_next = false;
                     state = State::Default;
                 },
+            },
+            State::LineComment => match c {
+                Some('\n') => state = State::Default,
+                _ => {},
             },
         }
 

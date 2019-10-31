@@ -3,6 +3,7 @@
 mod lex;
 mod parse;
 mod util;
+mod walker;
 
 use self::{
     util::SrcRegion,
@@ -93,7 +94,7 @@ impl From<ErrorKind> for Error {
 pub struct Engine;
 
 impl Engine {
-    pub fn execute(&mut self, code: &str) -> Result<Value, Vec<Error>> {
+    pub fn execute(&mut self, code: &str) -> Result<walker::Value, Vec<Error>> {
         let (tokens, ctx) = lex::lex(code)?;
 
         println!("--- Tokens ---");
@@ -104,8 +105,8 @@ impl Engine {
         println!("--- Syntax Tree ---");
         ast.print_debug(&ctx);
 
-        unimplemented!()
+        Ok(walker::AbstractMachine::default()
+            .execute(&ast, &ctx)
+            .unwrap())
     }
 }
-
-pub enum Value {}

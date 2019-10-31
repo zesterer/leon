@@ -13,8 +13,10 @@ fn main() {
             .read_to_string(&mut buf)
             .unwrap_or_else(|err| panic!("Could not read file '{}': {:?}", arg, err));
 
-        Engine::default()
+        let result = Engine::default()
             .execute(&buf)
             .unwrap();
+
+        println!("Result: {:?}", result);
     }
 }
