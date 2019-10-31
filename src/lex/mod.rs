@@ -115,6 +115,7 @@ impl Lexeme {
 }
 
 #[derive(Copy, Clone)]
+#[cfg_attr(test, derive(PartialEq, Debug))]
 pub struct Token {
     pub lexeme: Lexeme,
     pub region: SrcRegion,
@@ -133,6 +134,7 @@ impl Token {
     }
 }
 
+#[cfg_attr(test, derive(PartialEq, Debug))]
 pub struct TokenCtx {
     pub idents: InternTable<String>,
     pub strings: InternTable<String>,
@@ -379,4 +381,52 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
     } else {
         Err(errors)
     }
+}
+
+#[test]
+fn test_lex() {
+
+    use std::marker::PhantomData;
+
+    assert_eq!(
+        lex("println(\"Hello, world!\")"),
+        Ok({
+            let mut idents = InternTable::default();
+            let mut strings = InternTable::default();
+
+            let tokens = vec![
+                // println
+                Token {
+                    lexeme: Lexeme::Ident(idents.intern("println".to_owned())),
+                    region: SrcRegion::range(SrcLoc(0), SrcLoc(8)),
+                },
+                // (
+                Token {
+                    lexeme: Lexeme::LParen,
+                    region: SrcRegion::range(SrcLoc(7), SrcLoc(8)),
+                },
+                // "Hello, world!"
+                Token {
+                    lexeme: Lexeme::String(strings.intern("Hello, world!".to_owned())),
+                    region: SrcRegion::range(SrcLoc(8), SrcLoc(23)),
+                },
+                // )
+                Token {
+                    lexeme: Lexeme::RParen,
+                    region: SrcRegion::range(SrcLoc(23), SrcLoc(24)),
+                },
+                // Eof
+                Token {
+                    lexeme: Lexeme::Eof,
+                    region: SrcRegion::None,
+                }
+            ];
+
+            (tokens, TokenCtx {
+                idents,
+                strings,
+                numbers: InternTable::default(),
+            })
+        }),
+    );
 }

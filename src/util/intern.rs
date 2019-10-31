@@ -12,6 +12,7 @@ impl<T> Clone for Interned<T> {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(PartialEq, Debug))]
 pub struct InternTable<T: Eq> {
     items: Vec<T>,
 }

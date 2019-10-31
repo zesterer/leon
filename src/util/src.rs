@@ -1,6 +1,10 @@
 use std::fmt;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
+#[cfg(test)]
+pub struct SrcLoc(pub usize);
+#[derive(Copy, Clone, PartialEq)]
+#[cfg(not(test))]
 pub struct SrcLoc(usize);
 
 impl SrcLoc {
@@ -49,6 +53,7 @@ impl From<usize> for SrcLoc {
 }
 
 #[derive(Copy, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum SrcRegion {
     None,
     Range(SrcLoc, SrcLoc),
