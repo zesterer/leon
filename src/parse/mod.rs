@@ -78,7 +78,10 @@ pub enum BinaryOp {
     LessEq,
     Greater,
     GreaterEq,
+}
 
+#[derive(Debug)]
+pub enum Mutation {
     Assign,
     AddAssign,
     SubAssign,
@@ -97,6 +100,7 @@ pub enum Expr {
     ThisThen(Node<Expr>, Node<Expr>), // foo; bar
     IfElse(Node<Expr>, Node<Expr>, Node<Expr>),
     While(Node<Expr>, Node<Expr>),
+    Mutation(Node<Mutation>, Node<Expr>, Node<Expr>),
 }
 
 impl Expr {
@@ -116,6 +120,10 @@ impl Expr {
         Node::new(Expr::Binary(op, left, right), region)
     }
 
+    pub fn mutation(m: Node<Mutation>, left: Node<Expr>, right: Node<Expr>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::Mutation(m, left, right), region)
+    }
+
     pub fn this_then(this: Node<Expr>, then: Node<Expr>, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::ThisThen(this, then), region)
     }
@@ -132,6 +140,17 @@ impl Expr {
         Node::new(Expr::While(predicate, body), region)
     }
 
+    pub fn is_lvalue(self: &Node<Self>) -> Result<(), Error> {
+        match &*self.item {
+            Expr::Ident(_) => Ok(()),
+            Expr::Call(_, _) => Ok(()),
+            Expr::Var(_, _, tail) => tail.is_lvalue(),
+            Expr::ThisThen(_, tail) => tail.is_lvalue(),
+            Expr::IfElse(_, _, _) => Ok(()),
+            _ => Err(Error::expected(Thing::LValue).at(self.region)),
+        }
+    }
+
     fn print_debug_depth(&self, ctx: &TokenCtx, depth: usize) {
         (0..depth * 2).for_each(|_| print!("  "));
         match self {
@@ -143,6 +162,11 @@ impl Expr {
             },
             Expr::Binary(op, l, r) => {
                 println!("Binary Operation: {:?}", **op);
+                l.print_debug_depth(ctx, depth + 1);
+                r.print_debug_depth(ctx, depth + 1);
+            },
+            Expr::Mutation(m, l, r) => {
+                println!("Mutation Operation: {:?}", **m);
                 l.print_debug_depth(ctx, depth + 1);
                 r.print_debug_depth(ctx, depth + 1);
             },
@@ -227,27 +251,28 @@ fn parse_var(tokens: &mut impl TokenIter) -> Result<(Node<Interned<String>>, Nod
 }
 
 fn parse_expr(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
-    parse_assign(tokens)
+    parse_mutation(tokens)
         .map_err(|e| e.while_parsing(Thing::Expr))
 }
 
-fn parse_assign(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
+fn parse_mutation(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
     let left = parse_comparison(tokens)?;
 
-    let op = try_parse(tokens, |tok, iter| match tok.lexeme {
-        Lexeme::Eq => Ok(Node::new(BinaryOp::Assign, tok.region)),
-        Lexeme::AddEq => Ok(Node::new(BinaryOp::AddAssign, tok.region)),
-        Lexeme::SubEq => Ok(Node::new(BinaryOp::SubAssign, tok.region)),
-        Lexeme::MulEq => Ok(Node::new(BinaryOp::MulAssign, tok.region)),
-        Lexeme::DivEq => Ok(Node::new(BinaryOp::DivAssign, tok.region)),
-        Lexeme::RemEq => Ok(Node::new(BinaryOp::RemAssign, tok.region)),
+    let mutation = try_parse(tokens, |tok, iter| match tok.lexeme {
+        Lexeme::Eq => Ok(Node::new(Mutation::Assign, tok.region)),
+        Lexeme::AddEq => Ok(Node::new(Mutation::AddAssign, tok.region)),
+        Lexeme::SubEq => Ok(Node::new(Mutation::SubAssign, tok.region)),
+        Lexeme::MulEq => Ok(Node::new(Mutation::MulAssign, tok.region)),
+        Lexeme::DivEq => Ok(Node::new(Mutation::DivAssign, tok.region)),
+        Lexeme::RemEq => Ok(Node::new(Mutation::RemAssign, tok.region)),
         _ => Err(Error::spurious()),
     });
 
-    if let Ok(op) = op {
+    if let Ok(mutation) = mutation {
+        left.is_lvalue()?;
         let right = parse_comparison(tokens)?;
         let region = left.region.union(right.region);
-        Ok(Expr::binary(op, left, right, region))
+        Ok(Expr::mutation(mutation, left, right, region))
     } else {
         Ok(left)
     }

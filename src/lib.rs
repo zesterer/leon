@@ -1,4 +1,4 @@
-#![feature(trait_alias)]
+#![feature(trait_alias, arbitrary_self_types)]
 
 mod lex;
 mod parse;
@@ -16,6 +16,7 @@ pub enum Thing {
     Lexeme(Lexeme),
     Ident,
     Expr,
+    LValue,
 }
 
 #[derive(Clone, Debug, PartialEq)]

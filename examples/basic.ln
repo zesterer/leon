@@ -1,4 +1,12 @@
--10
+let total = 0;
+let i = 0;
+while i < 10 {
+	i += 1;
+	total += i;
+};
+total
+
+#x += 5;
 
 #let x = if true { 5 } else { 3 };
 
