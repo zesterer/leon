@@ -21,7 +21,10 @@ pub enum Lexeme {
     LBrack,
     RBrack,
 
+    Comma,
+    Colon,
     Semicolon,
+    Pipe,
 
     Dot,
     DotDot,
@@ -75,7 +78,10 @@ impl Lexeme {
             Lexeme::LBrack => "[",
             Lexeme::RBrack => "]",
 
+            Lexeme::Comma => ",",
+            Lexeme::Colon => ":",
             Lexeme::Semicolon => ";",
+            Lexeme::Pipe => "|",
 
             Lexeme::Dot => ".",
             Lexeme::DotDot => "..",
@@ -296,7 +302,10 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                 Some(')') => tokens.push(Token::new(Lexeme::RParen, SrcRegion::single(loc))),
                 Some('[') => tokens.push(Token::new(Lexeme::LBrack, SrcRegion::single(loc))),
                 Some(']') => tokens.push(Token::new(Lexeme::RBrack, SrcRegion::single(loc))),
+                Some(',') => tokens.push(Token::new(Lexeme::Comma, SrcRegion::single(loc))),
+                Some(':') => tokens.push(Token::new(Lexeme::Colon, SrcRegion::single(loc))),
                 Some(';') => tokens.push(Token::new(Lexeme::Semicolon, SrcRegion::single(loc))),
+                Some('|') => tokens.push(Token::new(Lexeme::Pipe, SrcRegion::single(loc))),
                 Some('"') => state = State::String(loc, String::new()),
                 Some('#') => state = State::LineComment,
                 Some(c) if c.is_alphabetic() || c == '_' => state = State::Ident(loc, Some(c).iter().collect()),

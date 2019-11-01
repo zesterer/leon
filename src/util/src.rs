@@ -84,8 +84,8 @@ impl SrcRegion {
 
     pub fn union(self, other: Self) -> Self {
         match (self, other) {
-            (SrcRegion::None, _) => SrcRegion::None,
-            (_, SrcRegion::None) => SrcRegion::None,
+            (SrcRegion::None, b) => b,
+            (a, SrcRegion::None) => a,
             (SrcRegion::Range(from_a, until_a), SrcRegion::Range(from_b, until_b)) =>
                 SrcRegion::Range(from_a.min(from_b), until_a.max(until_b)),
         }

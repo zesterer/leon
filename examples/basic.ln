@@ -1,10 +1,14 @@
 let total = 0;
 let i = 0;
-while i < 10 {
+while i < 100 {
 	i += 1;
 	total += i;
 };
-total
+total;
+
+let add = |a, b| a + b;
+let map = |x, f| f(x);
+map(add(4, 5), |x| x * x)
 
 #x += 5;
 

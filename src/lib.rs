@@ -95,7 +95,7 @@ impl From<ErrorKind> for Error {
 pub struct Engine;
 
 impl Engine {
-    pub fn execute(&mut self, code: &str) -> Result<walker::Value, Vec<Error>> {
+    pub fn execute(&mut self, code: &str) -> Result<(), Vec<Error>> {
         let (tokens, ctx) = lex::lex(code)?;
 
         println!("--- Tokens ---");
@@ -106,8 +106,12 @@ impl Engine {
         println!("--- Syntax Tree ---");
         ast.print_debug(&ctx);
 
-        Ok(walker::AbstractMachine::default()
+        let result = walker::AbstractMachine::default()
             .execute(&ast, &ctx)
-            .unwrap())
+            .unwrap();
+
+        println!("{:?}", result);
+
+        Ok(())
     }
 }

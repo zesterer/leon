@@ -17,6 +17,10 @@ impl<T> Node<T> {
             region,
         }
     }
+
+    pub fn into_inner(self) -> T {
+        *self.item
+    }
 }
 
 impl<T> Deref for Node<T> {
@@ -93,7 +97,7 @@ pub enum Mutation {
 pub enum Expr {
     Literal(Literal),
     Ident(Interned<String>),
-    Call(Node<Expr>, Vec<Node<Expr>>),
+    Call(Node<Expr>, Node<Vec<Node<Expr>>>),
     Unary(Node<UnaryOp>, Node<Expr>),
     Binary(Node<BinaryOp>, Node<Expr>, Node<Expr>),
     Var(Node<Interned<String>>, Node<Expr>, Node<Expr>), // let foo = 5; bar
@@ -101,6 +105,7 @@ pub enum Expr {
     IfElse(Node<Expr>, Node<Expr>, Node<Expr>),
     While(Node<Expr>, Node<Expr>),
     Mutation(Node<Mutation>, Node<Expr>, Node<Expr>),
+    Func(Node<Vec<Node<Interned<String>>>>, Node<Expr>),
 }
 
 impl Expr {
@@ -138,6 +143,14 @@ impl Expr {
 
     pub fn while_loop(predicate: Node<Expr>, body: Node<Expr>, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::While(predicate, body), region)
+    }
+
+    pub fn func(params: Node<Vec<Node<Interned<String>>>>, body: Node<Expr>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::Func(params, body), region)
+    }
+
+    pub fn call(func: Node<Expr>, args: Node<Vec<Node<Expr>>>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::Call(func, args), region)
     }
 
     pub fn is_lvalue(self: &Node<Self>) -> Result<(), Error> {
@@ -191,6 +204,21 @@ impl Expr {
                 predicate.print_debug_depth(ctx, depth + 1);
                 body.print_debug_depth(ctx, depth + 1);
             },
+            Expr::Func(params, body) => {
+                let params = params
+                    .iter()
+                    .map(|i| ctx.idents.get(**i).to_string())
+                    .collect::<Vec<_>>();
+                println!("Func: {:?}", params);
+                body.print_debug_depth(ctx, depth + 1);
+            },
+            Expr::Call(func, args) => {
+                println!("Call:");
+                func.print_debug_depth(ctx, depth + 1);
+                for arg in args.iter() {
+                    arg.print_debug_depth(ctx, depth + 1);
+                }
+            },
             _ => unimplemented!(),
         }
     }
@@ -230,7 +258,7 @@ fn parse_block_body(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
         },
         Err(_) => match parse_expr(tokens) {
             Ok(expr) => match parse_lexeme(Lexeme::Semicolon, tokens) {
-                Ok(()) => Ok(Expr::this_then(expr, parse_block_body(tokens)?, SrcRegion::none())),
+                Ok(_) => Ok(Expr::this_then(expr, parse_block_body(tokens)?, SrcRegion::none())),
                 Err(_) => Ok(expr),
             },
             Err(_) => Ok(null),
@@ -344,11 +372,27 @@ fn parse_unary(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
         _ => Err(Error::spurious()),
     });
 
-    let expr = parse_atom(tokens)?;
+    let expr = parse_call(tokens)?;
 
     if let Ok(op) = op {
         let region = op.region.union(expr.region);
         Ok(Expr::unary(op, expr, region))
+    } else {
+        Ok(expr)
+    }
+}
+
+fn parse_call(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
+    let expr = parse_atom(tokens)?;
+
+    if let Ok(args) = parse_enclosed(
+        Lexeme::LParen,
+        Lexeme::RParen,
+        tokens,
+        |tokens| parse_list(tokens, parse_expr)
+    ) {
+        let region = expr.region.union(args.region);
+        Ok(Expr::call(expr, args, region))
     } else {
         Ok(expr)
     }
@@ -385,12 +429,24 @@ fn parse_atom(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
         })
         // While loops
         .or_else(|e0: Error| {
-            parse_lexeme(Lexeme::While, tokens).map_err(|e1| e0.clone().max(e1))?;
-            let predicate = parse_expr(tokens).map_err(|e1| e0.clone().max(e1))?;
-            let body = parse_block(tokens).map_err(|e1| e0.clone().max(e1))?;
+            parse_lexeme(Lexeme::While, tokens)?;
+            let predicate = parse_expr(tokens)?;
+            let body = parse_block(tokens)?;
             let region = predicate.region.union(body.region);
             Ok(Expr::while_loop(predicate, body, region))
-        })
+        }.map_err(|e1| e0.clone().max(e1)))
+        // Functions
+        .or_else(|e0| {
+            let params = parse_enclosed(
+                Lexeme::Pipe,
+                Lexeme::Pipe,
+                tokens,
+                |tokens| parse_list(tokens, parse_ident),
+            )?;
+            let body = parse_expr(tokens)?;
+            let region = params.region.union(body.region);
+            Ok(Expr::func(params, body, region))
+        }.map_err(|e1| e0.clone().max(e1)))
 }
 
 fn parse_enclosed<I: TokenIter, R>(
@@ -400,18 +456,42 @@ fn parse_enclosed<I: TokenIter, R>(
     f: impl FnOnce(&mut I) -> Result<Node<R>, Error>,
 ) -> Result<Node<R>, Error> {
 
-    parse_lexeme(head, tokens)?;
+    let head_region = parse_lexeme(head, tokens)?;
 
-    let inner = f(tokens);
+    let inner = f(tokens)?;
 
-    parse_lexeme(tail, tokens)?;
+    let tail_region = parse_lexeme(tail, tokens)?;
 
-    inner
+    Ok(Node::new(inner.into_inner(), head_region.union(tail_region)))
 }
 
-fn parse_lexeme(lexeme: Lexeme, tokens: &mut impl TokenIter) -> Result<(), Error> {
+fn parse_list<I: TokenIter, R>(
+    tokens: &mut I,
+    mut f: impl FnMut(&mut I) -> Result<Node<R>, Error>,
+) -> Result<Node<Vec<Node<R>>>, Error> {
+    let mut region = SrcRegion::none();
+    let mut items = Vec::new();
+
+    loop {
+        let expr = match f(tokens) {
+            Ok(expr) => expr,
+            Err(err) if items.len() > 0 => break,
+            Err(err) => return Err(err),
+        };
+        region = region.union(expr.region);
+        items.push(expr);
+        match parse_lexeme(Lexeme::Comma, tokens) {
+            Ok(_) => {},
+            Err(_) => break,
+        }
+    }
+
+    Ok(Node::new(items, region))
+}
+
+fn parse_lexeme(lexeme: Lexeme, tokens: &mut impl TokenIter) -> Result<SrcRegion, Error> {
     try_parse(tokens, |tok, iter| if tok.lexeme == lexeme {
-        Ok(())
+        Ok(tok.region)
     } else {
         Err(Error::expected(Thing::Lexeme(lexeme)).at(tok.region))
     })

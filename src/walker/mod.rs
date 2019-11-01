@@ -1,3 +1,4 @@
+use std::fmt;
 use crate::{
     lex::TokenCtx,
     parse::{
@@ -16,17 +17,32 @@ pub enum ExecError {
     InvalidOperation,
     NoSuchVar(String),
     NotTruthy,
+    NotCallable,
+    WrongNumberOfArgs,
 }
 
-#[derive(Clone, Debug)]
-pub enum Value {
+#[derive(Clone)]
+pub enum Value<'a> {
     String(String),
     Number(f64),
     Bool(bool),
     Null,
+    Func(&'a Node<Vec<Node<Interned<String>>>>, &'a Node<Expr>),
 }
 
-impl Value {
+impl<'a> fmt::Debug for Value<'a> {
+    fn fmt(&self, mut f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Value::String(x) => write!(f, "\"{}\"", x),
+            Value::Number(x) => write!(f, "{}", x),
+            Value::Bool(x) => write!(f, "{}", x),
+            Value::Null => write!(f, "null"),
+            Value::Func(_, _) => write!(f, "<func>"),
+        }
+    }
+}
+
+impl<'a> Value<'a> {
     pub fn from_literal(l: &Literal, ctx: &TokenCtx) -> Self {
         match l {
             Literal::String(i) => Value::String(ctx.strings.get(*i).clone()),
@@ -68,6 +84,20 @@ impl Value {
         }
     }
 
+    pub fn apply_sub(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
+    pub fn apply_mul(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
     pub fn apply_less(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a < b)),
@@ -96,16 +126,18 @@ impl Value {
 }
 
 #[derive(Default)]
-pub struct AbstractMachine {
-    stack: Vec<(Interned<String>, Value)>,
+pub struct AbstractMachine<'a> {
+    stack: Vec<Option<(Interned<String>, Value<'a>)>>,
 }
 
-impl AbstractMachine {
-    fn fetch_lvalue(&mut self, lvalue: &Node<Expr>, ctx: &TokenCtx) -> Result<&mut Value, ExecError> {
+impl<'a> AbstractMachine<'a> {
+    fn fetch_lvalue(&mut self, lvalue: &'a Node<Expr>, ctx: &TokenCtx) -> Result<&mut Value<'a>, ExecError> {
         match &**lvalue {
             Expr::Ident(i) => self.stack
                 .iter_mut()
                 .rev()
+                .take_while(|x| x.is_some())
+                .filter_map(|x| x.as_mut())
                 .find(|(ident, _)| ident == i)
                 .map(|(_, v)| v)
                 .ok_or(ExecError::NoSuchVar(ctx.idents.get(*i).clone())),
@@ -113,15 +145,18 @@ impl AbstractMachine {
         }
     }
 
-    fn exec(&mut self, expr: &Node<Expr>, ctx: &TokenCtx) -> Result<Value, ExecError> {
+    fn exec(&mut self, expr: &'a Node<Expr>, ctx: &TokenCtx) -> Result<Value<'a>, ExecError> {
         match &**expr {
             Expr::Literal(l) => Ok(Value::from_literal(&l, ctx)),
             Expr::Ident(i) => self.stack
                 .iter()
                 .rev()
+                .take_while(|x| x.is_some())
+                .filter_map(|x| x.as_ref())
                 .find(|(ident, _)| ident == i)
                 .map(|(_, v)| v.clone())
                 .ok_or(ExecError::NoSuchVar(ctx.idents.get(*i).clone())),
+            Expr::Func(params, body) => Ok(Value::Func(&params, &body)),
             Expr::Unary(op, a) => {
                 let a = self.exec(&a, ctx)?;
                 match &**op {
@@ -134,13 +169,15 @@ impl AbstractMachine {
                 let b = self.exec(&b, ctx)?;
                 match &**op {
                     BinaryOp::Add => a.apply_add(b),
+                    BinaryOp::Sub => a.apply_sub(b),
+                    BinaryOp::Mul => a.apply_mul(b),
                     BinaryOp::Less => a.apply_less(b),
                     _ => unimplemented!(),
                 }
             },
             Expr::Var(ident, expr, tail) => {
                 let val = self.exec(&expr, ctx)?;
-                self.stack.push((**ident, val));
+                self.stack.push(Some((**ident, val)));
                 let val = self.exec(&tail, ctx);
                 self.stack.pop();
                 val
@@ -166,9 +203,35 @@ impl AbstractMachine {
             },
             Expr::While(predicate, body) => {
                 while self.exec(&predicate, ctx)?.truth()? {
-                    self.exec(&body, ctx);
+                    self.exec(&body, ctx)?;
                 }
                 Ok(Value::Null)
+            },
+            Expr::Call(func, args) => {
+                let func = self.exec(&func, ctx)?;
+
+                if let Value::Func(params, body) = func {
+                    if params.len() == args.len() {
+                        let args = args
+                            .iter()
+                            .map(|arg| self.exec(arg, ctx))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        self.stack.push(None);
+                        for (i, arg) in params.iter().zip(args.into_iter()) {
+                            self.stack.push(Some((**i, arg)));
+                        }
+                        let val = self.exec(&body, ctx);
+                        for _ in 0..params.len() {
+                            self.stack.pop();
+                        }
+                        self.stack.pop();
+                        val
+                    } else {
+                        Err(ExecError::WrongNumberOfArgs)
+                    }
+                } else {
+                    Err(ExecError::NotCallable)
+                }
             },
             expr => {
                 expr.print_debug(ctx);
@@ -177,7 +240,7 @@ impl AbstractMachine {
         }
     }
 
-    pub fn execute(mut self, expr: &Node<Expr>, ctx: &TokenCtx) -> Result<Value, ExecError> {
+    pub fn execute(mut self, expr: &'a Node<Expr>, ctx: &TokenCtx) -> Result<Value<'a>, ExecError> {
         self.exec(expr, ctx)
     }
 }
