@@ -19,6 +19,7 @@ pub enum ExecError {
     NotTruthy,
     NotCallable,
     WrongNumberOfArgs,
+    OutOfRange,
 }
 
 #[derive(Clone)]
@@ -123,6 +124,17 @@ impl<'a> Value<'a> {
             _ => Err(ExecError::InvalidOperation),
         }
     }
+
+    pub fn apply_index(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::String(a), Value::Number(b)) => Ok(Value::String(a
+                .get(b as usize..b as usize + 1)
+                .ok_or(ExecError::OutOfRange)?
+                .into(),
+            )),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -131,16 +143,24 @@ pub struct AbstractMachine<'a> {
 }
 
 impl<'a> AbstractMachine<'a> {
-    fn fetch_lvalue(&mut self, lvalue: &'a Node<Expr>, ctx: &TokenCtx) -> Result<&mut Value<'a>, ExecError> {
+    fn mutate(&mut self, lvalue: &'a Node<Expr>, mutation: &Mutation, rvalue: Value<'a>, ctx: &TokenCtx) -> Result<(), ExecError> {
         match &**lvalue {
-            Expr::Ident(i) => self.stack
-                .iter_mut()
-                .rev()
-                .take_while(|x| x.is_some())
-                .filter_map(|x| x.as_mut())
-                .find(|(ident, _)| ident == i)
-                .map(|(_, v)| v)
-                .ok_or(ExecError::NoSuchVar(ctx.idents.get(*i).clone())),
+            Expr::Ident(i) => {
+                let lvalue = self.stack
+                    .iter_mut()
+                    .rev()
+                    .take_while(|x| x.is_some())
+                    .filter_map(|x| x.as_mut())
+                    .find(|(ident, _)| ident == i)
+                    .map(|(_, v)| v)
+                    .ok_or(ExecError::NoSuchVar(ctx.idents.get(*i).clone()))?;
+
+                match mutation {
+                    Mutation::Assign => lvalue.apply_assign(rvalue),
+                    Mutation::AddAssign => lvalue.apply_add_assign(rvalue),
+                    _ => unimplemented!(),
+                }
+            },
             _ => unimplemented!(),
         }
     }
@@ -188,12 +208,7 @@ impl<'a> AbstractMachine<'a> {
             },
             Expr::Mutation(m, lvalue, rhs) => {
                 let rhs = self.exec(&rhs, ctx)?;
-                let lvalue = self.fetch_lvalue(&lvalue, ctx)?;
-                match &**m {
-                    Mutation::Assign => lvalue.apply_assign(rhs)?,
-                    Mutation::AddAssign => lvalue.apply_add_assign(rhs)?,
-                    _ => unimplemented!(),
-                }
+                self.mutate(&lvalue, &**m, rhs, ctx)?;
                 Ok(Value::Null)
             },
             Expr::IfElse(predicate, a, b) => if self.exec(&predicate, ctx)?.truth()? {
@@ -232,6 +247,11 @@ impl<'a> AbstractMachine<'a> {
                 } else {
                     Err(ExecError::NotCallable)
                 }
+            },
+            Expr::Index(expr, index) => {
+                let expr = self.exec(&expr, ctx)?;
+                let index = self.exec(&index, ctx)?;
+                expr.apply_index(index)
             },
             expr => {
                 expr.print_debug(ctx);

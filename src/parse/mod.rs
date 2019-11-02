@@ -154,8 +154,8 @@ impl Expr {
         Node::new(Expr::Call(func, args), region)
     }
 
-    pub fn index(expr: Node<Expr>, arg: Node<Expr>, region: SrcRegion) -> Node<Self> {
-        Node::new(Expr::Index(expr, arg), region)
+    pub fn index(expr: Node<Expr>, index: Node<Expr>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::Index(expr, index), region)
     }
 
     pub fn is_lvalue(self: &Node<Self>) -> Result<(), Error> {
@@ -225,10 +225,10 @@ impl Expr {
                     arg.print_debug_depth(ctx, depth + 1);
                 }
             },
-            Expr::Index(expr, arg) => {
+            Expr::Index(expr, index) => {
                 println!("Index:");
                 expr.print_debug_depth(ctx, depth + 1);
-                arg.print_debug_depth(ctx, depth + 1);
+                index.print_debug_depth(ctx, depth + 1);
             },
             _ => unimplemented!(),
         }
@@ -406,35 +406,41 @@ fn parse_unary(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
 }
 
 fn parse_access(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
-    let expr = parse_atom(tokens)?;
+    attempt(tokens, |tokens| {
+        let mut expr = parse_atom(tokens)?;
 
-    // Call
-    if let Ok(args) = parse_enclosed(
-        Lexeme::LParen,
-        Lexeme::RParen,
-        tokens,
-        |tokens| parse_list(tokens, parse_expr)
-    ) {
-        let region = expr.region.union(args.region);
-        return Ok(Expr::call(expr, args, region));
-    }
+        loop {
+            // Call
+            if let Ok(args) = parse_enclosed(
+                Lexeme::LParen,
+                Lexeme::RParen,
+                tokens,
+                |tokens| parse_list(tokens, parse_expr)
+            ) {
+                let region = expr.region.union(args.region);
+                expr = Expr::call(expr, args, region);
+                continue;
+            }
 
-    // Index
-    if let Ok(args) = parse_enclosed(
-        Lexeme::LBrack,
-        Lexeme::RBrack,
-        tokens,
-        |tokens| parse_list(tokens, parse_expr)
-    ) {
-        let mut expr = expr;
-        for arg in args.into_inner().into_iter() {
-            let region = expr.region.union(arg.region);
-            expr = Expr::index(expr, arg, region);
+            // Index
+            if let Ok(args) = parse_enclosed(
+                Lexeme::LBrack,
+                Lexeme::RBrack,
+                tokens,
+                |tokens| parse_list(tokens, parse_expr)
+            ) {
+                for arg in args.into_inner().into_iter() {
+                    let region = expr.region.union(arg.region);
+                    expr = Expr::index(expr, arg, region);
+                }
+                continue;
+            }
+
+            break;
         }
-        return Ok(expr);
-    }
 
-    Ok(expr)
+        Ok(expr)
+    })
 }
 
 fn parse_atom(tokens: &mut impl TokenIter) -> Result<Node<Expr>, Error> {
