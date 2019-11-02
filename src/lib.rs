@@ -23,6 +23,7 @@ pub enum Thing {
 pub enum ErrorKind {
     Spurious, // Never revealed to user
     UnexpectedChar(char),
+    UnclosedDelimiter(char),
     UnknownOperator(String),
     UnexpectedEof,
     Expected(Thing),
@@ -43,6 +44,10 @@ impl Error {
 
     pub fn unexpected_char(c: char) -> Self {
         Self::from(ErrorKind::UnexpectedChar(c))
+    }
+
+    pub fn unclosed_delimiter(c: char) -> Self {
+        Self::from(ErrorKind::UnclosedDelimiter(c))
     }
 
     pub fn unknown_operator(op: String) -> Self {

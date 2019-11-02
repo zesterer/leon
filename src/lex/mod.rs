@@ -53,9 +53,17 @@ pub enum Lexeme {
     Fn,
     If,
     Else,
+    Loop,
     While,
     For,
+    Break,
+    Continue,
+    Match,
     Struct,
+    Trait,
+    This,
+    In,
+    As,
 
     True,
     False,
@@ -111,9 +119,17 @@ impl Lexeme {
             Lexeme::Fn => "fn",
             Lexeme::If => "if",
             Lexeme::Else => "else",
+            Lexeme::Loop => "loop",
             Lexeme::While => "while",
             Lexeme::For => "for",
+            Lexeme::Break => "break",
+            Lexeme::Continue => "continue",
+            Lexeme::Match => "match",
             Lexeme::Struct => "struct",
+            Lexeme::Trait => "trait",
+            Lexeme::This => "this",
+            Lexeme::In => "in",
+            Lexeme::As => "as",
 
             Lexeme::True => "true",
             Lexeme::False => "false",
@@ -323,10 +339,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                     state = State::Default;
                 },
                 Some(c) => string.push(c),
-                None => {
-                    to_next = false;
-                    state = State::Default;
-                },
+                None => break,
             },
             State::Ident(start, ident) => match c {
                 Some(c) if c.is_alphanumeric() || c == '_' => ident.push(c),
@@ -337,9 +350,16 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                         "fn" => Lexeme::Fn,
                         "if" => Lexeme::If,
                         "else" => Lexeme::Else,
+                        "loop" => Lexeme::Loop,
                         "while" => Lexeme::While,
                         "for" => Lexeme::For,
+                        "break" => Lexeme::Break,
+                        "continue" => Lexeme::Continue,
                         "struct" => Lexeme::Struct,
+                        "trait" => Lexeme::Trait,
+                        "this" => Lexeme::This,
+                        "in" => Lexeme::In,
+                        "as" => Lexeme::As,
                         "true" => Lexeme::True,
                         "false" => Lexeme::False,
                         "null" => Lexeme::Null,
@@ -384,6 +404,11 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
             chars.next();
             loc = loc.next();
         }
+    }
+
+    match state {
+        State::String(start, _) => errors.push(Error::unclosed_delimiter('"').at(SrcRegion::single(start))),
+        _ => {},
     }
 
     // EOF token
