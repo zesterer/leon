@@ -1,27 +1,26 @@
-# Loops
-let total = 0;
-let i = 0;
+var total = 0;
+var i = 0;
 while i < 100 {
-	i += 1;
-	total += i;
-};
+    i += 1;
+    total += i;
+}
 total;
 
 # Functions
-let add = |a, b| a + b;
-let map = |x, f| f(x);
+var add = |a, b| a + b;
+var map = |x, f| f(x);
 map(add(4, 5), |x| x * x);
 
 # Strings and loops
-let i = 0;
-let str = "X";
+var i = 0;
+var str = "X";
 while i < 10 {
 	str += "Y";
 	i += 1;
-};
+}
 str;
 
 # Indexing
-let str = "Hello, world!";
-let x = str[1];
+var str = "Hello, world!";
+var x = str[1];
 x

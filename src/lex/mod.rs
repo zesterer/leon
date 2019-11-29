@@ -2,11 +2,11 @@ use std::{
     fmt,
 };
 use crate::{
-    Error,
     util::{Interned, InternTable, SrcLoc, SrcRegion},
+    Error, Thing,
 };
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq, Debug)]
 pub enum Lexeme {
     Eof,
 
@@ -70,14 +70,26 @@ pub enum Lexeme {
     Null,
 }
 
+impl PartialEq<char> for Lexeme {
+    fn eq(&self, other: &char) -> bool {
+        self.as_str() == &other.to_string()
+    }
+}
+
+impl<'a> PartialEq<&'a str> for Lexeme {
+    fn eq(&self, other: &&'a str) -> bool {
+        self.as_str() == &other.to_string()
+    }
+}
+
 impl Lexeme {
-    pub fn as_str<'a>(&self, ctx: &'a TokenCtx) -> &'a str {
+    pub fn as_str<'a>(&self) -> &'a str {
         match self {
             Lexeme::Eof => "EOF",
 
-            Lexeme::Ident(i) => ctx.idents.get(*i),
-            Lexeme::String(i) => ctx.strings.get(*i),
-            Lexeme::Number(i) => ctx.numbers.get(*i),
+            Lexeme::Ident(i) => "<identifier>",
+            Lexeme::String(i) => "<string>",
+            Lexeme::Number(i) => "<number>",
 
             Lexeme::LBrace => "{",
             Lexeme::RBrace => "}",
@@ -136,12 +148,33 @@ impl Lexeme {
             Lexeme::Null => "null",
         }
     }
+
+    pub fn as_str_ctx<'a>(&self, ctx: &'a TokenCtx) -> &'a str {
+        match self {
+            Lexeme::Ident(i) => ctx.idents.get(*i),
+            Lexeme::String(i) => ctx.strings.get(*i),
+            Lexeme::Number(i) => ctx.numbers.get(*i),
+            _ => self.as_str(),
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Token {
     pub lexeme: Lexeme,
     pub region: SrcRegion,
+}
+
+impl PartialEq<char> for Token {
+    fn eq(&self, other: &char) -> bool {
+        self.lexeme == *other
+    }
+}
+
+impl<'a> PartialEq<&'a str> for Token {
+    fn eq(&self, other: &&'a str) -> bool {
+        self.lexeme == *other
+    }
 }
 
 impl Token {
@@ -153,7 +186,7 @@ impl Token {
     }
 
     pub fn print_debug(&self, ctx: &TokenCtx) {
-        println!("{:?}: '{}'", self.region, self.lexeme.as_str(ctx))
+        println!("{:?}: '{}'", self.region, self.lexeme.as_str_ctx(ctx))
     }
 }
 
@@ -330,7 +363,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                     to_next = false;
                     state = State::Operator(loc, OpState::empty());
                 },
-                Some(c) => errors.push(Error::unexpected_char(c).at(SrcRegion::single(loc))),
+                Some(c) => errors.push(Error::unexpected(Thing::Char(c)).at(SrcRegion::single(loc))),
                 None => break,
             },
             State::String(start, string) => match c {
@@ -411,9 +444,6 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
         _ => {},
     }
 
-    // EOF token
-    tokens.push(Token::new(Lexeme::Eof, SrcRegion::none()));
-
     if errors.len() == 0 {
         Ok((tokens, TokenCtx {
             idents,
@@ -457,11 +487,6 @@ fn test_lex() {
                     lexeme: Lexeme::RParen,
                     region: SrcRegion::range(SrcLoc(23), SrcLoc(24)),
                 },
-                // Eof
-                Token {
-                    lexeme: Lexeme::Eof,
-                    region: SrcRegion::None,
-                }
             ];
 
             (tokens, TokenCtx {

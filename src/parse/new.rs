@@ -6,7 +6,6 @@ use parze::prelude::*;
 use crate::{
     lex::{Lexeme, Token, TokenCtx},
     util::{Interned, SrcRegion},
-    Error, Thing,
 };
 
 pub struct Node<T> {
@@ -231,18 +230,47 @@ impl Expr {
     }
 }
 
+#[derive(Clone, Hash, Eq, PartialEq)]
+enum Thing {
+    Number,
+    String,
+    Bool,
+    Ident,
+    Lexeme(Lexeme),
+}
+
+pub struct Error {
+    found: Option<Token>,
+    expected: HashSet<Thing>,
+}
+
 impl ParseError<Token> for Error {
     fn unexpected(token: Token) -> Self {
-        Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
+        Self::found(token, None)
     }
 
     fn unexpected_end() -> Self {
-        Error::unexpected_eof()
+        Self {
+            found: None,
+            expected: HashSet::default(),
+        }
     }
 
     fn combine(mut self, mut other: Self) -> Self {
-        self.combine(other)
+        self.expected = self.expected
+            .union(&other.expected)
+            .cloned()
+            .collect();
+        self
+    }
+}
+
+impl Error {
+    pub fn found(found: Token, expected: impl IntoIterator<Item=Thing>) -> Self {
+        Self {
+            found: Some(found),
+            expected: expected.into_iter().collect(),
+        }
     }
 }
 
@@ -250,17 +278,13 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
     let number = try_map(|tok| match tok {
         Token { lexeme: Lexeme::Number(n), region }
             => Ok(Expr::literal(Literal::Number(n), region)),
-        token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
-            .expected(Thing::Number)),
+        token => Err(Error::found(token, Some(Thing::Number))),
     });
 
     let string = try_map(|tok| match tok {
         Token { lexeme: Lexeme::String(s), region }
             => Ok(Expr::literal(Literal::String(s), region)),
-        token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
-            .expected(Thing::String)),
+        token => Err(Error::found(token, Some(Thing::String))),
     });
 
     let boolean = try_map(|tok| match tok {
@@ -268,36 +292,24 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
             => Ok(Expr::literal(Literal::Bool(true), region)),
         Token { lexeme: Lexeme::False, region }
             => Ok(Expr::literal(Literal::Bool(false), region)),
-        token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
-            .expected(Thing::Bool)),
+        token => Err(Error::found(token, Some(Thing::Bool))),
     });
 
     let ident = try_map(|tok| match tok {
         Token { lexeme: Lexeme::Ident(i), region }
             => Ok(Node::new(i, region)),
-        token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
-            .expected(Thing::Ident)),
+        token => Err(Error::found(token, Some(Thing::Ident))),
     });
 
     parsers! {
         atom = {
-            | ident => { |ident| {
-                let region = ident.region;
-                Expr::ident(ident.into_inner(), region)
-            } }
             | number
             | string
             | boolean
-            | "null" => { |t: Token| Expr::literal(Literal::Null, t.region) }
+            | "null" => { |t: Token| Node::new(Expr::Literal(Literal::Null), t.region) }
             | '(' -& expr &- ')'
             | block
             | flow_control
-            | '|' -& param_list &- '|' & expr => { |(params, body): (Node<Vec<Node<Interned<String>>>>, _)| {
-                let region = params.region.union(body.region);
-                Expr::func(params, body, region)
-            } }
         }
 
         access = {
@@ -381,15 +393,6 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
 
         expr = { mutation }
 
-        param_list = {
-            ident ... ',' => { |idents| {
-                let region = idents
-                    .iter()
-                    .fold(SrcRegion::none(), |a, i| a.union(i.region));
-                Node::new(idents, region)
-            } }
-        }
-
         list = {
             expr ... ',' => { |exprs| {
                 let region = exprs
@@ -429,14 +432,13 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
                 let region = ident.region.union(expr.region);
                 Expr::var(ident, expr, then, region)
             } }
-            | flow_control & statement_chain => { |(expr, then)| Expr::this_then(expr, then, SrcRegion::none()) }
             | expr &- ';' & statement_chain => { |(expr, then)| Expr::this_then(expr, then, SrcRegion::none()) }
-            | expr
-            | { empty() } => { |_| Expr::literal(Literal::Null, SrcRegion::none()) }
+            | flow_control & statement_chain => { |(expr, then)| Expr::this_then(expr, then, SrcRegion::none()) }
+            | { nothing() } => { |_| Expr::literal(Literal::Null, SrcRegion::none()) }
         }
 
         block = { '{' -& statement_chain &- '}' }
     }
 
-    statement_chain.parse(tokens).map_err(|err| vec![err])
+    expr.parse(tokens).map_err(|err| vec![err])
 }

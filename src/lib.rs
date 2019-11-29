@@ -1,32 +1,35 @@
-#![feature(trait_alias, arbitrary_self_types)]
+#![feature(trait_alias, arbitrary_self_types, proc_macro_hygiene)]
 
 mod lex;
 mod parse;
 mod util;
 mod walker;
 
+use std::collections::HashSet;
 use self::{
     util::SrcRegion,
     lex::Lexeme,
 };
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum Thing {
-    Atom,
+    Char(char),
     Lexeme(Lexeme),
     Ident,
+    Number,
+    String,
+    Bool,
     Expr,
     LValue,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ErrorKind {
-    Spurious, // Never revealed to user
     UnexpectedChar(char),
     UnclosedDelimiter(char),
     UnknownOperator(String),
     UnexpectedEof,
-    Expected(Thing),
+    Unexpected(Thing),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -34,16 +37,13 @@ pub struct Error {
     kind: ErrorKind,
     region: Option<SrcRegion>,
     while_parsing: Vec<Thing>,
+    expected: HashSet<Thing>,
     hint: Option<&'static str>,
 }
 
 impl Error {
-    pub fn spurious() -> Self {
-        Self::from(ErrorKind::Spurious)
-    }
-
-    pub fn unexpected_char(c: char) -> Self {
-        Self::from(ErrorKind::UnexpectedChar(c))
+    pub fn unexpected(thing: impl Into<Thing>) -> Self {
+        Self::from(ErrorKind::Unexpected(thing.into()))
     }
 
     pub fn unclosed_delimiter(c: char) -> Self {
@@ -58,10 +58,6 @@ impl Error {
         Self::from(ErrorKind::UnexpectedEof)
     }
 
-    pub fn expected(thing: impl Into<Thing>) -> Self {
-        Self::from(ErrorKind::Expected(thing.into()))
-    }
-
     pub fn at(mut self, region: impl Into<Option<SrcRegion>>) -> Self {
         self.region = region.into();
         self
@@ -72,8 +68,18 @@ impl Error {
         self
     }
 
+    pub fn expected(mut self, thing: impl Into<Thing>) -> Self {
+        self.expected.insert(thing.into());
+        self
+    }
+
     pub fn hint(mut self, hint: &'static str) -> Self {
         self.hint = Some(hint);
+        self
+    }
+
+    pub fn combine(mut self, other: Self) -> Self {
+        self.expected.extend(other.expected.into_iter());
         self
     }
 
@@ -91,6 +97,7 @@ impl From<ErrorKind> for Error {
             kind,
             region: None,
             while_parsing: Vec::new(),
+            expected: HashSet::default(),
             hint: None,
         }
     }

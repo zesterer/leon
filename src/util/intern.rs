@@ -4,7 +4,7 @@ use std::{
     cmp::PartialEq,
 };
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug, Hash, Eq, PartialEq)]
 pub struct Interned<T>(usize, PhantomData<T>);
 impl<T> Copy for Interned<T> {}
 impl<T> Clone for Interned<T> {
