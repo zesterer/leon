@@ -9,6 +9,7 @@ use crate::{
     Error, Thing,
 };
 
+#[derive(Debug)]
 pub struct Node<T> {
     item: Box<T>,
     region: SrcRegion,
@@ -40,20 +41,21 @@ impl<T> DerefMut for Node<T> {
     }
 }
 
+#[derive(Debug)]
 pub enum Literal {
     String(Interned<String>),
-    Number(Interned<String>),
+    Number(f64),
     Bool(bool),
     Null,
 }
 
 impl Literal {
-    pub fn as_str<'a>(&self, ctx: &'a TokenCtx) -> &'a str {
+    pub fn as_string<'a>(&self, ctx: &'a TokenCtx) -> String {
         match self {
-            Literal::String(i) => ctx.strings.get(*i),
-            Literal::Number(i) => ctx.numbers.get(*i),
-            Literal::Bool(x) => if *x { "true" } else { "false" },
-            Literal::Null => "null",
+            Literal::String(i) => ctx.strings.get(*i).clone(),
+            Literal::Number(x) => format!("{}", x),
+            Literal::Bool(x) => if *x { "true" } else { "false" }.to_string(),
+            Literal::Null => "null".to_string(),
         }
     }
 }
@@ -98,6 +100,7 @@ pub enum Mutation {
     RemAssign,
 }
 
+#[derive(Debug)]
 pub enum Expr {
     Literal(Literal),
     Ident(Interned<String>),
@@ -111,6 +114,8 @@ pub enum Expr {
     Func(Node<Vec<Node<Interned<String>>>>, Node<Expr>),
     Call(Node<Expr>, Node<Vec<Node<Expr>>>),
     Index(Node<Expr>, Node<Expr>),
+    Field(Node<Expr>, Node<Interned<String>>),
+    Structure(Node<Vec<(Node<Interned<String>>, Node<Expr>)>>),
 }
 
 impl Expr {
@@ -162,10 +167,18 @@ impl Expr {
         Node::new(Expr::Index(expr, index), region)
     }
 
+    pub fn field(expr: Node<Expr>, field: Node<Interned<String>>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::Field(expr, field), region)
+    }
+
+    pub fn structure(fields: Node<Vec<(Node<Interned<String>>, Node<Expr>)>>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::Structure(fields), region)
+    }
+
     fn print_debug_depth(&self, ctx: &TokenCtx, depth: usize) {
         (0..depth * 2).for_each(|_| print!("  "));
         match self {
-            Expr::Literal(l) => println!("Literal: {}", l.as_str(ctx)),
+            Expr::Literal(l) => println!("Literal: {}", l.as_string(ctx)),
             Expr::Ident(i) => println!("Ident: {}", ctx.idents.get(*i)),
             Expr::Unary(op, expr) => {
                 println!("Unary Operation: {:?}", **op);
@@ -222,6 +235,19 @@ impl Expr {
                 expr.print_debug_depth(ctx, depth + 1);
                 index.print_debug_depth(ctx, depth + 1);
             },
+            Expr::Field(expr, field) => {
+                println!("Field: {}", ctx.idents.get(**field).to_string());
+                expr.print_debug_depth(ctx, depth + 1);
+            },
+            Expr::Structure(fields) => {
+                for (i, (name, expr)) in fields.iter().enumerate() {
+                    if i != 0 {
+                        (0..depth * 2).for_each(|_| print!("  "));
+                    }
+                    println!("Field: {}", ctx.idents.get(**name).to_string());
+                    expr.print_debug_depth(ctx, depth + 1);
+                }
+            },
             _ => unimplemented!(),
         }
     }
@@ -246,18 +272,18 @@ impl ParseError<Token> for Error {
     }
 }
 
-pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
+pub fn parse(tokens: &[Token], ctx: &TokenCtx) -> Result<Node<Expr>, Vec<Error>> {
     let number = try_map(|tok| match tok {
-        Token { lexeme: Lexeme::Number(n), region }
-            => Ok(Expr::literal(Literal::Number(n), region)),
+        Token { lexeme: Lexeme::Number(i), region }
+            => Ok(Expr::literal(Literal::Number(ctx.numbers.get(i).clone().parse().unwrap()), region)),
         token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
             .at(token.region)
             .expected(Thing::Number)),
     });
 
     let string = try_map(|tok| match tok {
-        Token { lexeme: Lexeme::String(s), region }
-            => Ok(Expr::literal(Literal::String(s), region)),
+        Token { lexeme: Lexeme::String(i), region }
+            => Ok(Expr::literal(Literal::String(i), region)),
         token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
             .at(token.region)
             .expected(Thing::String)),
@@ -293,6 +319,7 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
             | "null" => { |t: Token| Expr::literal(Literal::Null, t.region) }
             | '(' -& expr &- ')'
             | block
+            | structure
             | flow_control
             | '|' -& param_list &- '|' & expr => { |(params, body): (Node<Vec<Node<Interned<String>>>>, _)| {
                 let region = params.region.union(body.region);
@@ -301,22 +328,27 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
         }
 
         access = {
-            atom & (
-                | '(' -& list &- ')' => { |list: Node<Vec<Node<Expr>>>| (0, list) }
-                | '[' -& list &- ']' => { |list| (1, list) }
-            )* :> { |a, (kind, list)| {
-                let region = list.region.union(a.region);
-                match kind {
-                    0 => Expr::call(a, list, region),
-                    1 => list
+            | atom & (
+                // This is a bit horrid. Use boxed fns to get left-recursion working
+                | '(' -& list &- ')' => { |list: Node<Vec<Node<Expr>>>| Box::new(|expr: Node<Expr>| {
+                    let region = list.region.union(expr.region);
+                    Expr::call(expr, list, region)
+                }) as Box<dyn FnOnce(_) -> _> }
+                | '[' -& list &- ']' => { |list| Box::new(|expr: Node<Expr>| {
+                    list
                         .into_inner()
                         .into_iter()
-                        .fold(a, |a, index| {
-                            let region = a.region.union(index.region);
-                            Expr::index(a, index, region)
-                        }),
-                    _ => unreachable!(),
-                }
+                        .fold(expr, |expr, index| {
+                            let region = expr.region.union(index.region);
+                            Expr::index(expr, index, region)
+                        })
+                }) as Box<dyn FnOnce(_) -> _> }
+                | '.' -& ident => { |field| Box::new(|expr: Node<Expr>| {
+                    let region = field.region.union(expr.region);
+                    Expr::field(expr, field, region)
+                }) as Box<dyn FnOnce(_) -> _> }
+            )* :> { |a, f| {
+                f(a)
             } }
         }
 
@@ -382,7 +414,7 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
         expr = { mutation }
 
         param_list = {
-            ident ... ',' => { |idents| {
+            (ident ... ',') &- ','? => { |idents| {
                 let region = idents
                     .iter()
                     .fold(SrcRegion::none(), |a, i| a.union(i.region));
@@ -391,7 +423,7 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
         }
 
         list = {
-            expr ... ',' => { |exprs| {
+            (expr ... ',') &- ','? => { |exprs| {
                 let region = exprs
                     .iter()
                     .fold(SrcRegion::none(), |a, e| a.union(e.region));
@@ -434,8 +466,18 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
             | expr
             | { empty() } => { |_| Expr::literal(Literal::Null, SrcRegion::none()) }
         }
-
         block = { '{' -& statement_chain &- '}' }
+
+        field = { ident &- ':' & expr }
+        field_list = {
+            (field ... ',') &- ','? => { |fields| {
+                let region = fields
+                    .iter()
+                    .fold(SrcRegion::none(), |a, f| a.union(f.0.region).union(f.1.region));
+                Expr::structure(Node::new(fields, region), region)
+            } }
+        }
+        structure = { '{' -& field_list &- '}' }
     }
 
     statement_chain.parse(tokens).map_err(|err| vec![err])

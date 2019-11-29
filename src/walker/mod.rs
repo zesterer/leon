@@ -1,4 +1,7 @@
-use std::fmt;
+use std::{
+    fmt,
+    collections::HashMap,
+};
 use crate::{
     lex::TokenCtx,
     parse::{
@@ -9,7 +12,7 @@ use crate::{
         BinaryOp,
         Mutation,
     },
-    util::Interned,
+    util::{Interned, InternTable},
 };
 
 #[derive(Debug)]
@@ -20,6 +23,9 @@ pub enum ExecError {
     NotCallable,
     WrongNumberOfArgs,
     OutOfRange,
+    NotAnLValue,
+    NoSuchField,
+    NotAStructure,
 }
 
 #[derive(Clone)]
@@ -29,6 +35,7 @@ pub enum Value<'a> {
     Bool(bool),
     Null,
     Func(&'a Node<Vec<Node<Interned<String>>>>, &'a Node<Expr>),
+    Structure(HashMap<Interned<String>, Value<'a>>),
 }
 
 impl<'a> fmt::Debug for Value<'a> {
@@ -39,15 +46,16 @@ impl<'a> fmt::Debug for Value<'a> {
             Value::Bool(x) => write!(f, "{}", x),
             Value::Null => write!(f, "null"),
             Value::Func(_, _) => write!(f, "<func>"),
+            Value::Structure(_) => write!(f, "<structure>"),
         }
     }
 }
 
 impl<'a> Value<'a> {
-    pub fn from_literal(l: &Literal, ctx: &TokenCtx) -> Self {
+    pub fn from_literal(l: &Literal, machine: &AbstractMachine<'a>) -> Self {
         match l {
-            Literal::String(i) => Value::String(ctx.strings.get(*i).clone()),
-            Literal::Number(i) => Value::Number(ctx.numbers.get(*i).parse().unwrap()),
+            Literal::String(i) => Value::String(machine.strings.get(*i).clone()),
+            Literal::Number(x) => Value::Number(*x),
             Literal::Bool(x) => Value::Bool(*x),
             Literal::Null => Value::Null,
         }
@@ -99,7 +107,38 @@ impl<'a> Value<'a> {
         }
     }
 
+    pub fn apply_div(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a / b)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
+    pub fn apply_rem(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a % b)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
+    pub fn apply_eq(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a == b)),
+            (Value::String(a), Value::String(b)) => Ok(Value::Bool(a == b)),
+            (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a == b)),
+            (Value::Null, Value::Null) => Ok(Value::Bool(true)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
     pub fn apply_less(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a < b)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
+    pub fn apply_greater(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a < b)),
             _ => Err(ExecError::InvalidOperation),
@@ -135,39 +174,68 @@ impl<'a> Value<'a> {
             _ => Err(ExecError::InvalidOperation),
         }
     }
+
+    pub fn field_mut(&mut self, field: &Interned<String>) -> Result<&mut Self, ExecError> {
+        match self {
+            Value::Structure(fields) => fields
+                .get_mut(field)
+                .ok_or(ExecError::NoSuchField),
+            _ => Err(ExecError::NotAStructure),
+        }
+    }
+
+    pub fn field(&self, field: &Interned<String>) -> Result<&Self, ExecError> {
+        match self {
+            Value::Structure(fields) => fields
+                .get(field)
+                .ok_or(ExecError::NoSuchField),
+            _ => Err(ExecError::NotAStructure),
+        }
+    }
 }
 
-#[derive(Default)]
 pub struct AbstractMachine<'a> {
+    strings: InternTable<String>,
+    idents: InternTable<String>,
     stack: Vec<Option<(Interned<String>, Value<'a>)>>,
 }
 
 impl<'a> AbstractMachine<'a> {
-    fn mutate(&mut self, lvalue: &'a Node<Expr>, mutation: &Mutation, rvalue: Value<'a>, ctx: &TokenCtx) -> Result<(), ExecError> {
-        match &**lvalue {
-            Expr::Ident(i) => {
-                let lvalue = self.stack
-                    .iter_mut()
-                    .rev()
-                    .take_while(|x| x.is_some())
-                    .filter_map(|x| x.as_mut())
-                    .find(|(ident, _)| ident == i)
-                    .map(|(_, v)| v)
-                    .ok_or(ExecError::NoSuchVar(ctx.idents.get(*i).clone()))?;
+    pub fn new(strings: InternTable<String>, idents: InternTable<String>) -> Self {
+        Self {
+            strings,
+            idents,
+            stack: Vec::new(),
+        }
+    }
 
-                match mutation {
-                    Mutation::Assign => lvalue.apply_assign(rvalue),
-                    Mutation::AddAssign => lvalue.apply_add_assign(rvalue),
-                    _ => unimplemented!(),
-                }
-            },
+    fn value_mut(&mut self, lvalue: &'a Node<Expr>) -> Result<&mut Value<'a>, ExecError> {
+        match &**lvalue {
+            Expr::Ident(i) => Ok(self.stack
+                .iter_mut()
+                .rev()
+                .take_while(|x| x.is_some())
+                .filter_map(|x| x.as_mut())
+                .find(|(ident, _)| ident == i)
+                .map(|(_, v)| v)
+                .ok_or(ExecError::NoSuchVar(self.idents.get(*i).clone()))?),
+            Expr::Field(expr, field) => self.value_mut(expr)?.field_mut(&*field),
+            _ => Err(ExecError::NotAnLValue)
+        }
+    }
+
+    fn mutate(&mut self, lvalue: &'a Node<Expr>, mutation: &Mutation, rvalue: Value<'a>) -> Result<(), ExecError> {
+        let lvalue = self.value_mut(lvalue)?;
+        match mutation {
+            Mutation::Assign => lvalue.apply_assign(rvalue),
+            Mutation::AddAssign => lvalue.apply_add_assign(rvalue),
             _ => unimplemented!(),
         }
     }
 
-    fn exec(&mut self, expr: &'a Node<Expr>, ctx: &TokenCtx) -> Result<Value<'a>, ExecError> {
+    fn exec(&mut self, expr: &'a Node<Expr>) -> Result<Value<'a>, ExecError> {
         match &**expr {
-            Expr::Literal(l) => Ok(Value::from_literal(&l, ctx)),
+            Expr::Literal(l) => Ok(Value::from_literal(&l, &self)),
             Expr::Ident(i) => self.stack
                 .iter()
                 .rev()
@@ -175,67 +243,79 @@ impl<'a> AbstractMachine<'a> {
                 .filter_map(|x| x.as_ref())
                 .find(|(ident, _)| ident == i)
                 .map(|(_, v)| v.clone())
-                .ok_or(ExecError::NoSuchVar(ctx.idents.get(*i).clone())),
+                .ok_or(ExecError::NoSuchVar(self.idents.get(*i).clone())),
             Expr::Func(params, body) => Ok(Value::Func(&params, &body)),
+            Expr::Structure(fields) => {
+                let fields = fields
+                    .iter()
+                    .map(|(ident, expr)| self.exec(expr)
+                        .map(|field| (**ident, field)))
+                    .collect::<Result<_, _>>()?;
+                Ok(Value::Structure(fields))
+            },
             Expr::Unary(op, a) => {
-                let a = self.exec(&a, ctx)?;
+                let a = self.exec(&a)?;
                 match &**op {
                     UnaryOp::Not => a.apply_not(),
                     UnaryOp::Neg => a.apply_neg(),
                 }
             },
             Expr::Binary(op, a, b) => {
-                let a = self.exec(&a, ctx)?;
-                let b = self.exec(&b, ctx)?;
+                let a = self.exec(&a)?;
+                let b = self.exec(&b)?;
                 match &**op {
                     BinaryOp::Add => a.apply_add(b),
                     BinaryOp::Sub => a.apply_sub(b),
                     BinaryOp::Mul => a.apply_mul(b),
+                    BinaryOp::Div => a.apply_div(b),
+                    BinaryOp::Rem => a.apply_rem(b),
+                    BinaryOp::Eq => a.apply_eq(b),
                     BinaryOp::Less => a.apply_less(b),
+                    BinaryOp::Greater => a.apply_greater(b),
                     _ => unimplemented!(),
                 }
             },
             Expr::Var(ident, expr, tail) => {
-                let val = self.exec(&expr, ctx)?;
+                let val = self.exec(&expr)?;
                 self.stack.push(Some((**ident, val)));
-                let val = self.exec(&tail, ctx);
+                let val = self.exec(&tail);
                 self.stack.pop();
                 val
             },
             Expr::ThisThen(head, tail) => {
-                self.exec(&head, ctx)?;
-                self.exec(&tail, ctx)
+                self.exec(&head)?;
+                self.exec(&tail)
             },
             Expr::Mutation(m, lvalue, rhs) => {
-                let rhs = self.exec(&rhs, ctx)?;
-                self.mutate(&lvalue, &**m, rhs, ctx)?;
+                let rhs = self.exec(&rhs)?;
+                self.mutate(&lvalue, &**m, rhs)?;
                 Ok(Value::Null)
             },
-            Expr::IfElse(predicate, a, b) => if self.exec(&predicate, ctx)?.truth()? {
-                self.exec(&a, ctx)
+            Expr::IfElse(predicate, a, b) => if self.exec(&predicate)?.truth()? {
+                self.exec(&a)
             } else {
-                self.exec(&b, ctx)
+                self.exec(&b)
             },
             Expr::While(predicate, body) => {
-                while self.exec(&predicate, ctx)?.truth()? {
-                    self.exec(&body, ctx)?;
+                while self.exec(&predicate)?.truth()? {
+                    self.exec(&body)?;
                 }
                 Ok(Value::Null)
             },
             Expr::Call(func, args) => {
-                let func = self.exec(&func, ctx)?;
+                let func = self.exec(&func)?;
 
                 if let Value::Func(params, body) = func {
                     if params.len() == args.len() {
                         let args = args
                             .iter()
-                            .map(|arg| self.exec(arg, ctx))
+                            .map(|arg| self.exec(arg))
                             .collect::<Result<Vec<_>, _>>()?;
                         self.stack.push(None);
                         for (i, arg) in params.iter().zip(args.into_iter()) {
                             self.stack.push(Some((**i, arg)));
                         }
-                        let val = self.exec(&body, ctx);
+                        let val = self.exec(&body);
                         for _ in 0..params.len() {
                             self.stack.pop();
                         }
@@ -249,18 +329,21 @@ impl<'a> AbstractMachine<'a> {
                 }
             },
             Expr::Index(expr, index) => {
-                let expr = self.exec(&expr, ctx)?;
-                let index = self.exec(&index, ctx)?;
+                let expr = self.exec(&expr)?;
+                let index = self.exec(&index)?;
                 expr.apply_index(index)
             },
+            Expr::Field(expr, field) => {
+                let expr = self.exec(&expr)?;
+                expr.field(&**field).map(|x| x.clone())
+            },
             expr => {
-                expr.print_debug(ctx);
-                unimplemented!()
+                unimplemented!("{:?}", expr)
             },
         }
     }
 
-    pub fn execute(mut self, expr: &'a Node<Expr>, ctx: &TokenCtx) -> Result<Value<'a>, ExecError> {
-        self.exec(expr, ctx)
+    pub fn execute(mut self, expr: &'a Node<Expr>) -> Result<Value<'a>, ExecError> {
+        self.exec(expr)
     }
 }

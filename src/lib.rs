@@ -110,16 +110,16 @@ impl Engine {
     pub fn execute(&mut self, code: &str) -> Result<(), Vec<Error>> {
         let (tokens, ctx) = lex::lex(code)?;
 
-        println!("--- Tokens ---");
+        //println!("--- Tokens ---");
         ctx.print_debug(&tokens);
 
-        let ast = parse::parse(&tokens)?;
+        let ast = parse::parse(&tokens, &ctx)?;
 
         println!("--- Syntax Tree ---");
         ast.print_debug(&ctx);
 
-        let result = walker::AbstractMachine::default()
-            .execute(&ast, &ctx)
+        let result = walker::AbstractMachine::new(ctx.strings, ctx.idents)
+            .execute(&ast)
             .unwrap();
 
         println!("{:?}", result);

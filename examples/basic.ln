@@ -23,4 +23,3 @@ str;
 # Indexing
 var str = "Hello, world!";
 var x = str[1];
-x
