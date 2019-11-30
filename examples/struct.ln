@@ -2,20 +2,25 @@
 var foo = {
 	x: 5,
 	y: 7,
-};
-
-foo.x += 10;
-
-var a = {
-	b: {
-		c: {
-			d: {
-				e: {
-					f: || || |z| z + 1
-				},
-			},
-		},
+	increment_x_by: |n| {
+		self.x += n;
 	},
 };
 
-a.b.c.d.e.f()()(5)
+foo.increment_x_by(30);
+
+foo.x;
+
+
+var foo = {
+	bar: {
+		boo: {
+			far: 10,
+			thing: |x| self.far + x,
+		},
+		thing: |x| self.boo.thing(x),
+	},
+	thing: |x| self.bar.thing(x),
+};
+
+foo.thing(10)

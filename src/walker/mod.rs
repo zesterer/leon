@@ -1,5 +1,7 @@
 use std::{
     fmt,
+    rc::Rc,
+    cell::{RefCell, Ref},
     collections::HashMap,
 };
 use crate::{
@@ -15,7 +17,7 @@ use crate::{
     util::{Interned, InternTable},
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ExecError {
     InvalidOperation,
     NoSuchVar(String),
@@ -35,7 +37,8 @@ pub enum Value<'a> {
     Bool(bool),
     Null,
     Func(&'a Node<Vec<Node<Interned<String>>>>, &'a Node<Expr>),
-    Structure(HashMap<Interned<String>, Value<'a>>),
+    Structure(HashMap<Interned<String>, Self>),
+    Ref(Rc<RefCell<Self>>),
 }
 
 impl<'a> fmt::Debug for Value<'a> {
@@ -47,6 +50,7 @@ impl<'a> fmt::Debug for Value<'a> {
             Value::Null => write!(f, "null"),
             Value::Func(_, _) => write!(f, "<func>"),
             Value::Structure(_) => write!(f, "<structure>"),
+            Value::Ref(val) => write!(f, "ref {:?}", *val.borrow()),
         }
     }
 }
@@ -175,43 +179,53 @@ impl<'a> Value<'a> {
         }
     }
 
-    pub fn field_mut(&mut self, field: &Interned<String>) -> Result<&mut Self, ExecError> {
+    pub fn field_mutate(&mut self, field: &Interned<String>, f: impl FnOnce(&mut Self) -> Result<(), ExecError>) -> Result<(), ExecError> {
         match self {
-            Value::Structure(fields) => fields
+            Value::Structure(fields) => f(fields
                 .get_mut(field)
-                .ok_or(ExecError::NoSuchField),
+                .ok_or(ExecError::NoSuchField)?),
+            Value::Ref(val) => val.borrow_mut().field_mutate(field, f),
             _ => Err(ExecError::NotAStructure),
         }
     }
 
-    pub fn field(&self, field: &Interned<String>) -> Result<&Self, ExecError> {
+    pub fn field_and_receiver(&self, field: &Interned<String>) -> Result<(Option<Self>, Self), ExecError> {
         match self {
-            Value::Structure(fields) => fields
+            Value::Structure(fields) => Ok((None, fields
                 .get(field)
-                .ok_or(ExecError::NoSuchField),
+                .cloned()
+                .ok_or(ExecError::NoSuchField)?)),
+            Value::Ref(val) => Ok((Some(self.clone()), val.borrow().field_and_receiver(field)?.1)),
             _ => Err(ExecError::NotAStructure),
         }
+    }
+
+    pub fn into_ref(self) -> Result<Self, ExecError> {
+        Ok(Value::Ref(Rc::new(RefCell::new(self))))
     }
 }
 
 pub struct AbstractMachine<'a> {
+    self_ident: Interned<String>,
     strings: InternTable<String>,
     idents: InternTable<String>,
     stack: Vec<Option<(Interned<String>, Value<'a>)>>,
 }
 
 impl<'a> AbstractMachine<'a> {
-    pub fn new(strings: InternTable<String>, idents: InternTable<String>) -> Self {
+    pub fn new(strings: InternTable<String>, mut idents: InternTable<String>) -> Self {
+
         Self {
+            self_ident: idents.intern("self".to_string()),
             strings,
             idents,
             stack: Vec::new(),
         }
     }
 
-    fn value_mut(&mut self, lvalue: &'a Node<Expr>) -> Result<&mut Value<'a>, ExecError> {
+    fn value_mut_with<'b>(&'b mut self, lvalue: &'a Node<Expr>, f: Box<dyn FnOnce(&mut Value<'a>) -> Result<(), ExecError> + 'b>) -> Result<(), ExecError> {
         match &**lvalue {
-            Expr::Ident(i) => Ok(self.stack
+            Expr::Ident(i) => f(self.stack
                 .iter_mut()
                 .rev()
                 .take_while(|x| x.is_some())
@@ -219,23 +233,27 @@ impl<'a> AbstractMachine<'a> {
                 .find(|(ident, _)| ident == i)
                 .map(|(_, v)| v)
                 .ok_or(ExecError::NoSuchVar(self.idents.get(*i).clone()))?),
-            Expr::Field(expr, field) => self.value_mut(expr)?.field_mut(&*field),
+            Expr::Field(expr, field) => {
+                self.value_mut_with(expr, Box::new(|val| val.field_mutate(&*field, f)))
+            },
             _ => Err(ExecError::NotAnLValue)
         }
     }
 
     fn mutate(&mut self, lvalue: &'a Node<Expr>, mutation: &Mutation, rvalue: Value<'a>) -> Result<(), ExecError> {
-        let lvalue = self.value_mut(lvalue)?;
-        match mutation {
-            Mutation::Assign => lvalue.apply_assign(rvalue),
-            Mutation::AddAssign => lvalue.apply_add_assign(rvalue),
-            _ => unimplemented!(),
-        }
+        let lvalue = self.value_mut_with(lvalue, Box::new(|lvalue| {
+            match mutation {
+                Mutation::Assign => lvalue.apply_assign(rvalue),
+                Mutation::AddAssign => lvalue.apply_add_assign(rvalue),
+                _ => unimplemented!(),
+            }
+        }))?;
+        Ok(())
     }
 
-    fn exec(&mut self, expr: &'a Node<Expr>) -> Result<Value<'a>, ExecError> {
-        match &**expr {
-            Expr::Literal(l) => Ok(Value::from_literal(&l, &self)),
+    fn exec(&mut self, expr: &'a Node<Expr>) -> Result<(Option<Value<'a>>, Value<'a>), ExecError> {
+        let val = match &**expr {
+            Expr::Literal(l) => Value::from_literal(&l, &self),
             Expr::Ident(i) => self.stack
                 .iter()
                 .rev()
@@ -243,26 +261,25 @@ impl<'a> AbstractMachine<'a> {
                 .filter_map(|x| x.as_ref())
                 .find(|(ident, _)| ident == i)
                 .map(|(_, v)| v.clone())
-                .ok_or(ExecError::NoSuchVar(self.idents.get(*i).clone())),
-            Expr::Func(params, body) => Ok(Value::Func(&params, &body)),
+                .ok_or(ExecError::NoSuchVar(self.idents.get(*i).clone()))?,
+            Expr::Func(params, body) => Value::Func(&params, &body),
             Expr::Structure(fields) => {
                 let fields = fields
                     .iter()
-                    .map(|(ident, expr)| self.exec(expr)
-                        .map(|field| (**ident, field)))
+                    .map(|(ident, expr)| Ok((**ident, self.exec(expr)?.1)))
                     .collect::<Result<_, _>>()?;
-                Ok(Value::Structure(fields))
+                Value::Structure(fields).into_ref()?
             },
             Expr::Unary(op, a) => {
-                let a = self.exec(&a)?;
+                let a = self.exec(&a)?.1;
                 match &**op {
                     UnaryOp::Not => a.apply_not(),
                     UnaryOp::Neg => a.apply_neg(),
-                }
+                }?
             },
             Expr::Binary(op, a, b) => {
-                let a = self.exec(&a)?;
-                let b = self.exec(&b)?;
+                let a = self.exec(&a)?.1;
+                let b = self.exec(&b)?.1;
                 match &**op {
                     BinaryOp::Add => a.apply_add(b),
                     BinaryOp::Sub => a.apply_sub(b),
@@ -273,37 +290,37 @@ impl<'a> AbstractMachine<'a> {
                     BinaryOp::Less => a.apply_less(b),
                     BinaryOp::Greater => a.apply_greater(b),
                     _ => unimplemented!(),
-                }
+                }?
             },
             Expr::Var(ident, expr, tail) => {
-                let val = self.exec(&expr)?;
+                let val = self.exec(&expr)?.1;
                 self.stack.push(Some((**ident, val)));
-                let val = self.exec(&tail);
+                let val = self.exec(&tail)?.1;
                 self.stack.pop();
                 val
             },
             Expr::ThisThen(head, tail) => {
                 self.exec(&head)?;
-                self.exec(&tail)
+                self.exec(&tail)?.1
             },
             Expr::Mutation(m, lvalue, rhs) => {
-                let rhs = self.exec(&rhs)?;
+                let rhs = self.exec(&rhs)?.1;
                 self.mutate(&lvalue, &**m, rhs)?;
-                Ok(Value::Null)
+                Value::Null
             },
-            Expr::IfElse(predicate, a, b) => if self.exec(&predicate)?.truth()? {
-                self.exec(&a)
+            Expr::IfElse(predicate, a, b) => if self.exec(&predicate)?.1.truth()? {
+                self.exec(&a)?.1
             } else {
-                self.exec(&b)
+                self.exec(&b)?.1
             },
             Expr::While(predicate, body) => {
-                while self.exec(&predicate)?.truth()? {
+                while self.exec(&predicate)?.1.truth()? {
                     self.exec(&body)?;
                 }
-                Ok(Value::Null)
+                Value::Null
             },
             Expr::Call(func, args) => {
-                let func = self.exec(&func)?;
+                let (receiver, func) = self.exec(&func)?;
 
                 if let Value::Func(params, body) = func {
                     if params.len() == args.len() {
@@ -312,38 +329,42 @@ impl<'a> AbstractMachine<'a> {
                             .map(|arg| self.exec(arg))
                             .collect::<Result<Vec<_>, _>>()?;
                         self.stack.push(None);
+                        self.stack.push(Some((self.self_ident, receiver.unwrap_or(Value::Null))));
                         for (i, arg) in params.iter().zip(args.into_iter()) {
-                            self.stack.push(Some((**i, arg)));
+                            self.stack.push(Some((**i, arg.1)));
                         }
-                        let val = self.exec(&body);
+                        let val = self.exec(&body)?.1;
                         for _ in 0..params.len() {
                             self.stack.pop();
                         }
                         self.stack.pop();
+                        self.stack.pop();
                         val
                     } else {
-                        Err(ExecError::WrongNumberOfArgs)
+                        return Err(ExecError::WrongNumberOfArgs);
                     }
                 } else {
-                    Err(ExecError::NotCallable)
+                    return Err(ExecError::NotCallable);
                 }
             },
             Expr::Index(expr, index) => {
-                let expr = self.exec(&expr)?;
-                let index = self.exec(&index)?;
-                expr.apply_index(index)
+                let expr = self.exec(&expr)?.1;
+                let index = self.exec(&index)?.1;
+                expr.apply_index(index)?
             },
             Expr::Field(expr, field) => {
-                let expr = self.exec(&expr)?;
-                expr.field(&**field).map(|x| x.clone())
+                let expr = self.exec(&expr)?.1;
+                return expr.field_and_receiver(&**field).map(|x| x.clone())
             },
             expr => {
                 unimplemented!("{:?}", expr)
             },
-        }
+        };
+
+        Ok((None, val))
     }
 
     pub fn execute(mut self, expr: &'a Node<Expr>) -> Result<Value<'a>, ExecError> {
-        self.exec(expr)
+        Ok(self.exec(expr)?.1)
     }
 }
