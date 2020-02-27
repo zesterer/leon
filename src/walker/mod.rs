@@ -15,11 +15,15 @@ use crate::{
         Mutation,
     },
     util::{Interned, InternTable},
+    object::{self, Object},
+    box_val::BoxVal,
 };
 
 #[derive(Clone, Debug)]
 pub enum ExecError {
     InvalidOperation,
+    // TODO: merge with invalid operation?
+    InvalidObjOperation(String),
     NoSuchVar(String),
     NotTruthy,
     NotCallable,
@@ -39,6 +43,7 @@ pub enum Value<'a> {
     Func(&'a Node<Vec<Node<Interned<String>>>>, &'a Node<Expr>),
     Structure(HashMap<Interned<String>, Self>),
     Ref(Rc<RefCell<Self>>),
+    Custom(BoxVal<dyn Object>),
 }
 
 impl<'a> fmt::Debug for Value<'a> {
@@ -68,6 +73,7 @@ impl<'a> Value<'a> {
     pub fn truth(&self) -> Result<bool, ExecError> {
         match self {
             Value::Bool(x) => Ok(*x),
+            Value::Custom(x) => Ok(x.truth()),
             _ => Err(ExecError::NotTruthy),
         }
     }
@@ -75,6 +81,7 @@ impl<'a> Value<'a> {
     pub fn apply_not(self) -> Result<Self, ExecError> {
         match self {
             Value::Bool(a) => Ok(Value::Bool(!a)),
+            Value::Custom(a) => Ok(a.not()),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -82,6 +89,7 @@ impl<'a> Value<'a> {
     pub fn apply_neg(self) -> Result<Self, ExecError> {
         match self {
             Value::Number(a) => Ok(Value::Number(-a)),
+            Value::Custom(a) => Ok(a.neg()),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -93,6 +101,7 @@ impl<'a> Value<'a> {
                 a += &b;
                 Ok(Value::String(a))
             },
+            (Value::Custom(a), b) => Ok(a.add(b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -100,6 +109,7 @@ impl<'a> Value<'a> {
     pub fn apply_sub(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
+            (Value::Custom(a), b) => Ok(a.sub(b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -107,6 +117,7 @@ impl<'a> Value<'a> {
     pub fn apply_mul(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
+            (Value::Custom(a), b) => Ok(a.mul(b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -114,6 +125,7 @@ impl<'a> Value<'a> {
     pub fn apply_div(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a / b)),
+            (Value::Custom(a), b) => Ok(a.div(b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -121,6 +133,7 @@ impl<'a> Value<'a> {
     pub fn apply_rem(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a % b)),
+            (Value::Custom(a), b) => Ok(a.rem(b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -131,6 +144,7 @@ impl<'a> Value<'a> {
             (Value::String(a), Value::String(b)) => Ok(Value::Bool(a == b)),
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a == b)),
             (Value::Null, Value::Null) => Ok(Value::Bool(true)),
+            (Value::Custom(a), b) => Ok(a.eq(b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -138,6 +152,7 @@ impl<'a> Value<'a> {
     pub fn apply_less(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a < b)),
+            (Value::Custom(a), b) => Ok(a.less(b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -145,6 +160,7 @@ impl<'a> Value<'a> {
     pub fn apply_greater(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a < b)),
+            (Value::Custom(a), b) => Ok(a.greater(b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -164,6 +180,9 @@ impl<'a> Value<'a> {
                 *a += &b;
                 Ok(())
             },
+            (Value::Custom(a), b) => {
+                *self = a.add(b)
+            },
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -175,6 +194,7 @@ impl<'a> Value<'a> {
                 .ok_or(ExecError::OutOfRange)?
                 .into(),
             )),
+            (Value::Custom(a), b) => Ok(a.index(b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -201,6 +221,7 @@ impl<'a> Value<'a> {
     }
 
     pub fn into_ref(self) -> Result<Self, ExecError> {
+        // What if it is already Value::Ref?
         Ok(Value::Ref(Rc::new(RefCell::new(self))))
     }
 }
