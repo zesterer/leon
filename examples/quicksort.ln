@@ -1,0 +1,27 @@
+var qs = |qs, items| if items.len < 2 {
+	items
+} else {
+	var less = [];
+	var eq = [];
+	var more = [];
+
+	var mid = items[items.len / 2];
+
+	var i = 0;
+	while i < items.len {
+		var item = items[i];
+		if item > mid {
+			more += item;
+		} else if item < mid {
+			less += item;
+		} else {
+			eq += item;
+		}
+
+		i += 1;
+	}
+
+	qs(qs, less) + eq + qs(qs, more)
+};
+
+qs(qs, [4, 6, 3, 2, 8, 9, 1])

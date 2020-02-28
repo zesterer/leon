@@ -1,6 +1,7 @@
 use std::{
     fmt,
 };
+use internment::LocalIntern;
 use crate::{
     util::{Interned, InternTable, SrcLoc, SrcRegion},
     Error, Thing,
@@ -12,7 +13,7 @@ pub enum Lexeme {
 
     Ident(Interned<String>),
     String(Interned<String>),
-    Number(Interned<String>),
+    Number(LocalIntern<String>),
 
     LBrace,
     RBrace,
@@ -64,6 +65,13 @@ pub enum Lexeme {
     This,
     In,
     As,
+    And,
+    Or,
+    Xor,
+
+    Char,
+    Num,
+    Str,
 
     True,
     False,
@@ -142,6 +150,13 @@ impl Lexeme {
             Lexeme::This => "this",
             Lexeme::In => "in",
             Lexeme::As => "as",
+            Lexeme::And => "and",
+            Lexeme::Or => "or",
+            Lexeme::Xor => "xor",
+
+            Lexeme::Char => "char",
+            Lexeme::Num => "num",
+            Lexeme::Str => "str",
 
             Lexeme::True => "true",
             Lexeme::False => "false",
@@ -149,17 +164,17 @@ impl Lexeme {
         }
     }
 
-    pub fn as_str_ctx<'a>(&self, ctx: &'a TokenCtx) -> &'a str {
+    pub fn as_str_ctx<'a>(&'a self, ctx: &'a TokenCtx) -> &'a str {
         match self {
             Lexeme::Ident(i) => ctx.idents.get(*i),
             Lexeme::String(i) => ctx.strings.get(*i),
-            Lexeme::Number(i) => ctx.numbers.get(*i),
+            Lexeme::Number(x) => x.as_str(),
             _ => self.as_str(),
         }
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Token {
     pub lexeme: Lexeme,
     pub region: SrcRegion,
@@ -168,6 +183,12 @@ pub struct Token {
 impl PartialEq<char> for Token {
     fn eq(&self, other: &char) -> bool {
         self.lexeme == *other
+    }
+}
+
+impl PartialEq<Lexeme> for Token {
+    fn eq(&self, other: &Lexeme) -> bool {
+        &self.lexeme == other
     }
 }
 
@@ -316,7 +337,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
 
     fn is_operator_part(c: char) -> bool {
         match c {
-            '.' | '+' | '-' | '*' | '/' | '&' | '|' | '!' | '=' | '<' | '>' => true,
+            '.' | '+' | '-' | '*' | '/' | '%' | '&' | '|' | '!' | '=' | '<' | '>' => true,
             _ => false,
         }
     }
@@ -393,6 +414,12 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                         "this" => Lexeme::This,
                         "in" => Lexeme::In,
                         "as" => Lexeme::As,
+                        "and" => Lexeme::And,
+                        "or" => Lexeme::Or,
+                        "xor" => Lexeme::Xor,
+                        "char" => Lexeme::Char,
+                        "num" => Lexeme::Num,
+                        "str" => Lexeme::Str,
                         "true" => Lexeme::True,
                         "false" => Lexeme::False,
                         "null" => Lexeme::Null,
@@ -406,7 +433,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
             State::Number(start, number) => match c {
                 Some(c) if c.is_alphanumeric() || c == '_' => number.push(c),
                 _ => {
-                    tokens.push(Token::new(Lexeme::Number(numbers.intern(number.clone())), SrcRegion::range(*start, loc.next())));
+                    tokens.push(Token::new(Lexeme::Number(LocalIntern::new(number.clone())), SrcRegion::range(*start, loc.next())));
                     to_next = false;
                     state = State::Default;
                 },

@@ -1,3 +1,6 @@
+mod heap;
+mod value;
+
 use std::{
     fmt,
     rc::Rc,
@@ -9,6 +12,7 @@ use crate::{
     parse::{
         Node,
         Expr,
+        Ty,
         Literal,
         UnaryOp,
         BinaryOp,
@@ -28,6 +32,8 @@ pub enum ExecError {
     NotAnLValue,
     NoSuchField,
     NotAStructure,
+    InvalidIndex,
+    InvalidLength,
 }
 
 #[derive(Clone)]
@@ -39,6 +45,7 @@ pub enum Value<'a> {
     Func(&'a Node<Vec<Node<Interned<String>>>>, &'a Node<Expr>),
     Structure(HashMap<Interned<String>, Self>),
     Ref(Rc<RefCell<Self>>),
+    List(Vec<Self>),
 }
 
 impl<'a> fmt::Debug for Value<'a> {
@@ -49,14 +56,19 @@ impl<'a> fmt::Debug for Value<'a> {
             Value::Bool(x) => write!(f, "{}", x),
             Value::Null => write!(f, "null"),
             Value::Func(_, _) => write!(f, "<func>"),
-            Value::Structure(_) => write!(f, "<structure>"),
+            Value::Structure(fields) => write!(f, "{}", fields
+                .iter()
+                .map(|(name, val)| format!("{:?}: {:?}", name, val))
+                .collect::<Vec<_>>()
+                .join(", ")),
             Value::Ref(val) => write!(f, "ref {:?}", *val.borrow()),
+            Value::List(items) => write!(f, "{:?}", items),
         }
     }
 }
 
 impl<'a> Value<'a> {
-    pub fn from_literal(l: &Literal, machine: &AbstractMachine<'a>) -> Self {
+    fn from_literal(l: &Literal, machine: &AbstractMachine<'a>) -> Self {
         match l {
             Literal::String(i) => Value::String(machine.strings.get(*i).clone()),
             Literal::Number(x) => Value::Number(*x),
@@ -65,67 +77,75 @@ impl<'a> Value<'a> {
         }
     }
 
-    pub fn truth(&self) -> Result<bool, ExecError> {
+    fn truth(&self) -> Result<bool, ExecError> {
         match self {
             Value::Bool(x) => Ok(*x),
             _ => Err(ExecError::NotTruthy),
         }
     }
 
-    pub fn apply_not(self) -> Result<Self, ExecError> {
+    fn apply_not(self) -> Result<Self, ExecError> {
         match self {
             Value::Bool(a) => Ok(Value::Bool(!a)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_neg(self) -> Result<Self, ExecError> {
+    fn apply_neg(self) -> Result<Self, ExecError> {
         match self {
             Value::Number(a) => Ok(Value::Number(-a)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_add(self, rhs: Self) -> Result<Self, ExecError> {
+    fn apply_add(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
             (Value::String(mut a), Value::String(b)) => {
                 a += &b;
                 Ok(Value::String(a))
             },
+            (Value::List(mut a), Value::List(mut b)) => {
+                a.append(&mut b);
+                Ok(Value::List(a))
+            },
+            (Value::List(mut a), b) => {
+                a.push(b);
+                Ok(Value::List(a))
+            },
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_sub(self, rhs: Self) -> Result<Self, ExecError> {
+    fn apply_sub(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_mul(self, rhs: Self) -> Result<Self, ExecError> {
+    fn apply_mul(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_div(self, rhs: Self) -> Result<Self, ExecError> {
+    fn apply_div(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a / b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_rem(self, rhs: Self) -> Result<Self, ExecError> {
+    fn apply_rem(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a % b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_eq(self, rhs: Self) -> Result<Self, ExecError> {
+    fn apply_eq(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a == b)),
             (Value::String(a), Value::String(b)) => Ok(Value::Bool(a == b)),
@@ -135,51 +155,104 @@ impl<'a> Value<'a> {
         }
     }
 
-    pub fn apply_less(self, rhs: Self) -> Result<Self, ExecError> {
+    fn apply_not_eq(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a != b)),
+            (Value::String(a), Value::String(b)) => Ok(Value::Bool(a != b)),
+            (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a != b)),
+            (Value::Null, Value::Null) => Ok(Value::Bool(false)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
+    fn apply_less(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a < b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_greater(self, rhs: Self) -> Result<Self, ExecError> {
+    fn apply_greater(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a < b)),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a > b)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_assign(&mut self, rhs: Self) -> Result<(), ExecError> {
+    fn apply_and(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
+    fn apply_or(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
+    fn apply_xor(self, rhs: Self) -> Result<Self, ExecError> {
+        match (self, rhs) {
+            (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a != b)),
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
+    fn apply_assign(&mut self, rhs: Self) -> Result<(), ExecError> {
         *self = rhs;
         Ok(())
     }
 
-    pub fn apply_add_assign(&mut self, rhs: Self) -> Result<(), ExecError> {
-        match (self, &rhs) {
+    fn apply_add_assign(&mut self, mut rhs: Self) -> Result<(), ExecError> {
+        match (self, &mut rhs) {
             (Value::Number(a), Value::Number(b)) => {
-                *a += b;
+                *a += *b;
                 Ok(())
             },
             (Value::String(a), Value::String(b)) => {
                 *a += &b;
                 Ok(())
             },
+            (Value::List(a), Value::List(b)) => {
+                a.append(b);
+                Ok(())
+            },
+            (Value::List(a), _) => {
+                a.push(rhs);
+                Ok(())
+            },
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn apply_index(self, rhs: Self) -> Result<Self, ExecError> {
+    fn apply_sub_assign(&mut self, mut rhs: Self) -> Result<(), ExecError> {
+        match (self, &mut rhs) {
+            (Value::Number(a), Value::Number(b)) => {
+                *a -= *b;
+                Ok(())
+            },
+            _ => Err(ExecError::InvalidOperation),
+        }
+    }
+
+    fn apply_index(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::String(a), Value::Number(b)) => Ok(Value::String(a
                 .get(b as usize..b as usize + 1)
                 .ok_or(ExecError::OutOfRange)?
                 .into(),
             )),
+            (Value::List(a), Value::Number(b)) => a
+                .get(b as usize)
+                .cloned()
+                .ok_or(ExecError::OutOfRange),
             _ => Err(ExecError::InvalidOperation),
         }
     }
 
-    pub fn field_mutate(&mut self, field: &Interned<String>, f: impl FnOnce(&mut Self) -> Result<(), ExecError>) -> Result<(), ExecError> {
+    fn field_mutate(&mut self, field: &Interned<String>, f: impl FnOnce(&mut Self) -> Result<(), ExecError>) -> Result<(), ExecError> {
         match self {
             Value::Structure(fields) => f(fields
                 .get_mut(field)
@@ -189,24 +262,50 @@ impl<'a> Value<'a> {
         }
     }
 
-    pub fn field_and_receiver(&self, field: &Interned<String>) -> Result<(Option<Self>, Self), ExecError> {
+    fn index_mutate(&mut self, index: Self, f: impl FnOnce(&mut Self) -> Result<(), ExecError>) -> Result<(), ExecError> {
         match self {
-            Value::Structure(fields) => Ok((None, fields
-                .get(field)
-                .cloned()
-                .ok_or(ExecError::NoSuchField)?)),
-            Value::Ref(val) => Ok((Some(self.clone()), val.borrow().field_and_receiver(field)?.1)),
+            Value::List(items) => f(items
+                .get_mut(match index {
+                    Value::Number(x) => x as usize,
+                    _ => return Err(ExecError::InvalidIndex),
+                })
+                .ok_or(ExecError::OutOfRange)?),
+            Value::Ref(val) => val.borrow_mut().index_mutate(index, f),
             _ => Err(ExecError::NotAStructure),
         }
     }
 
-    pub fn into_ref(self) -> Result<Self, ExecError> {
+    fn field_and_receiver(&self, field: Interned<String>, special: &SpecialIdents) -> Result<(Option<Self>, Self), ExecError> {
+        match self {
+            Value::List(items) if field == special.len => Ok((None, Value::Number(items.len() as f64))),
+            Value::Structure(fields) => Ok((None, fields
+                .get(&field)
+                .cloned()
+                .ok_or(ExecError::NoSuchField)?)),
+            Value::Ref(val) => Ok((Some(self.clone()), val.borrow().field_and_receiver(field, special)?.1)),
+            val => Err(ExecError::NotAStructure),
+        }
+    }
+
+    fn into_ref(self) -> Result<Self, ExecError> {
         Ok(Value::Ref(Rc::new(RefCell::new(self))))
+    }
+
+    fn convert(self, ty: &Ty) -> Result<Self, ExecError> {
+        match (self, ty) {
+            (Value::Number(x), Ty::Char) => Ok(Value::String((x as u8 as char).to_string())),
+            _ => Err(ExecError::InvalidOperation),
+        }
     }
 }
 
+struct SpecialIdents {
+    _self: Interned<String>,
+    len: Interned<String>,
+}
+
 pub struct AbstractMachine<'a> {
-    self_ident: Interned<String>,
+    special: SpecialIdents,
     strings: InternTable<String>,
     idents: InternTable<String>,
     stack: Vec<Option<(Interned<String>, Value<'a>)>>,
@@ -216,7 +315,10 @@ impl<'a> AbstractMachine<'a> {
     pub fn new(strings: InternTable<String>, mut idents: InternTable<String>) -> Self {
 
         Self {
-            self_ident: idents.intern("self".to_string()),
+            special: SpecialIdents {
+                _self: idents.intern("self".to_string()),
+                len: idents.intern("len".to_string()),
+            },
             strings,
             idents,
             stack: Vec::new(),
@@ -236,6 +338,10 @@ impl<'a> AbstractMachine<'a> {
             Expr::Field(expr, field) => {
                 self.value_mut_with(expr, Box::new(|val| val.field_mutate(&*field, f)))
             },
+            Expr::Index(expr, index) => {
+                let index = self.exec(index)?.1;
+                self.value_mut_with(expr, Box::new(|val| val.index_mutate(index, f)))
+            },
             _ => Err(ExecError::NotAnLValue)
         }
     }
@@ -245,7 +351,8 @@ impl<'a> AbstractMachine<'a> {
             match mutation {
                 Mutation::Assign => lvalue.apply_assign(rvalue),
                 Mutation::AddAssign => lvalue.apply_add_assign(rvalue),
-                _ => unimplemented!(),
+                Mutation::SubAssign => lvalue.apply_sub_assign(rvalue),
+                m => unimplemented!("{:?}", m),
             }
         }))?;
         Ok(())
@@ -270,6 +377,21 @@ impl<'a> AbstractMachine<'a> {
                     .collect::<Result<_, _>>()?;
                 Value::Structure(fields).into_ref()?
             },
+            Expr::List(items) => {
+                let items = items
+                    .iter()
+                    .map(|item| Ok(self.exec(item)?.1))
+                    .collect::<Result<_, _>>()?;
+                Value::List(items)
+            },
+            Expr::ListMany(item, count) => {
+                let count = self.exec(count)?.1;
+                let item = self.exec(item)?.1;
+                match count {
+                    Value::Number(x) => Value::List(vec![item; x as usize]),
+                    _ => return Err(ExecError::InvalidLength),
+                }
+            },
             Expr::Unary(op, a) => {
                 let a = self.exec(&a)?.1;
                 match &**op {
@@ -287,9 +409,13 @@ impl<'a> AbstractMachine<'a> {
                     BinaryOp::Div => a.apply_div(b),
                     BinaryOp::Rem => a.apply_rem(b),
                     BinaryOp::Eq => a.apply_eq(b),
+                    BinaryOp::NotEq => a.apply_not_eq(b),
                     BinaryOp::Less => a.apply_less(b),
                     BinaryOp::Greater => a.apply_greater(b),
-                    _ => unimplemented!(),
+                    BinaryOp::And => a.apply_and(b),
+                    BinaryOp::Or => a.apply_or(b),
+                    BinaryOp::Xor => a.apply_xor(b),
+                    op => unimplemented!("{:?}", op),
                 }?
             },
             Expr::Var(ident, expr, tail) => {
@@ -329,7 +455,7 @@ impl<'a> AbstractMachine<'a> {
                             .map(|arg| self.exec(arg))
                             .collect::<Result<Vec<_>, _>>()?;
                         self.stack.push(None);
-                        self.stack.push(Some((self.self_ident, receiver.unwrap_or(Value::Null))));
+                        self.stack.push(Some((self.special._self, receiver.unwrap_or(Value::Null))));
                         for (i, arg) in params.iter().zip(args.into_iter()) {
                             self.stack.push(Some((**i, arg.1)));
                         }
@@ -352,9 +478,13 @@ impl<'a> AbstractMachine<'a> {
                 let index = self.exec(&index)?.1;
                 expr.apply_index(index)?
             },
+            Expr::Convert(expr, ty) => {
+                let expr = self.exec(&expr)?.1;
+                expr.convert(&*ty)?
+            },
             Expr::Field(expr, field) => {
                 let expr = self.exec(&expr)?.1;
-                return expr.field_and_receiver(&**field).map(|x| x.clone())
+                return expr.field_and_receiver(**field, &self.special).map(|x| x.clone())
             },
             expr => {
                 unimplemented!("{:?}", expr)

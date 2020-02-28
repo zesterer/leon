@@ -1,0 +1,16 @@
+var basket = [
+	"eggs",
+	"milk",
+];
+
+basket += [
+	"bread",
+	"apples",
+];
+
+
+if true {
+	basket = ["pears"] + basket;
+}
+
+if true { basket } else { "!" }

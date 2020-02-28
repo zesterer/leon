@@ -5,22 +5,43 @@ mod parse;
 mod util;
 mod walker;
 
-use std::collections::HashSet;
 use self::{
     util::SrcRegion,
-    lex::Lexeme,
+    lex::{Token, Lexeme},
 };
 
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub enum Thing {
     Char(char),
+    Ident(String),
     Lexeme(Lexeme),
-    Ident,
-    Number,
-    String,
-    Bool,
+    Token(Token),
     Expr,
     LValue,
+}
+
+impl From<char> for Thing {
+    fn from(c: char) -> Self {
+        Thing::Char(c)
+    }
+}
+
+impl<'a> From<&'a str> for Thing {
+    fn from(s: &'a str) -> Self {
+        Thing::Ident(s.to_string())
+    }
+}
+
+impl From<Lexeme> for Thing {
+    fn from(lexeme: Lexeme) -> Self {
+        Thing::Lexeme(lexeme)
+    }
+}
+
+impl From<Token> for Thing {
+    fn from(tok: Token) -> Self {
+        Thing::Token(tok)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +50,7 @@ pub enum ErrorKind {
     UnclosedDelimiter(char),
     UnknownOperator(String),
     UnexpectedEof,
+    ExpectedEof(Thing),
     Unexpected(Thing),
 }
 
@@ -37,7 +59,7 @@ pub struct Error {
     kind: ErrorKind,
     region: Option<SrcRegion>,
     while_parsing: Vec<Thing>,
-    expected: HashSet<Thing>,
+    expected: Vec<Thing>,
     hint: Option<&'static str>,
 }
 
@@ -58,6 +80,10 @@ impl Error {
         Self::from(ErrorKind::UnexpectedEof)
     }
 
+    pub fn expected_eof(thing: impl Into<Thing>) -> Self {
+        Self::from(ErrorKind::ExpectedEof(thing.into()))
+    }
+
     pub fn at(mut self, region: impl Into<Option<SrcRegion>>) -> Self {
         self.region = region.into();
         self
@@ -68,8 +94,8 @@ impl Error {
         self
     }
 
-    pub fn expected(mut self, thing: impl Into<Thing>) -> Self {
-        self.expected.insert(thing.into());
+    pub fn expected(mut self, things: impl IntoIterator<Item=Thing>) -> Self {
+        self.expected.extend(things);
         self
     }
 
@@ -79,7 +105,11 @@ impl Error {
     }
 
     pub fn combine(mut self, other: Self) -> Self {
-        self.expected.extend(other.expected.into_iter());
+        for thing in other.expected.into_iter() {
+            if !self.expected.contains(&thing) {
+                self.expected.push(thing);
+            }
+        }
         self
     }
 
@@ -97,7 +127,7 @@ impl From<ErrorKind> for Error {
             kind,
             region: None,
             while_parsing: Vec::new(),
-            expected: HashSet::default(),
+            expected: Default::default(),
             hint: None,
         }
     }
@@ -113,7 +143,12 @@ impl Engine {
         //println!("--- Tokens ---");
         ctx.print_debug(&tokens);
 
-        let ast = parse::parse(&tokens, &ctx)?;
+        let ast = parse::parse(&tokens).map_err(|errs| {
+            for err in &errs {
+                println!("Location: {:?}", err.region.map(|region| region.in_context(code)));
+            }
+            errs
+        })?;
 
         println!("--- Syntax Tree ---");
         ast.print_debug(&ctx);

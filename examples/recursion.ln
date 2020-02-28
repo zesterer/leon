@@ -1,0 +1,7 @@
+var f = |f, x| if x == 0 {
+	1
+} else {
+	x * f(f, x - 1)
+};
+
+f(f, 10)

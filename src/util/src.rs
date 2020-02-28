@@ -1,9 +1,10 @@
-use std::fmt;
+use std::{fmt, ops::Range};
+use crate::lex::Token;
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 #[cfg(test)]
 pub struct SrcLoc(pub usize);
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 #[cfg(not(test))]
 pub struct SrcLoc(usize);
 
@@ -52,7 +53,7 @@ impl From<usize> for SrcLoc {
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub enum SrcRegion {
     None,
     Range(SrcLoc, SrcLoc),
@@ -133,5 +134,26 @@ impl From<usize> for SrcRegion {
 impl From<(usize, usize)> for SrcRegion {
     fn from((from, to): (usize, usize)) -> Self {
         SrcRegion::Range(SrcLoc::from(from), SrcLoc::from(to))
+    }
+}
+
+impl parze::region::Region<Token> for SrcRegion {
+    fn none() -> Self {
+        SrcRegion::none()
+    }
+
+    fn single(index: usize, sym: &Token) -> Self {
+        sym.region
+    }
+
+    fn group(syms: &[Token], _range: Range<usize>) -> Self {
+        syms
+            .first()
+            .map(|s| s.region)
+            .unwrap_or(SrcRegion::none())
+            .union(syms
+                .last()
+                .map(|s| s.region)
+                .unwrap_or(SrcRegion::none()))
     }
 }

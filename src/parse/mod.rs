@@ -101,6 +101,24 @@ pub enum Mutation {
 }
 
 #[derive(Debug)]
+pub enum Ty {
+    Char,
+    Num,
+    Str,
+}
+
+impl Ty {
+    fn print_debug_depth(&self, ctx: &TokenCtx, depth: usize) {
+        (0..depth * 2).for_each(|_| print!("  "));
+        match self {
+            Ty::Char => println!("char"),
+            Ty::Num => println!("num"),
+            Ty::Str => println!("str"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Expr {
     Literal(Literal),
     Ident(Interned<String>),
@@ -116,9 +134,16 @@ pub enum Expr {
     Index(Node<Expr>, Node<Expr>),
     Field(Node<Expr>, Node<Interned<String>>),
     Structure(Node<Vec<(Node<Interned<String>>, Node<Expr>)>>),
+    List(Node<Vec<Node<Expr>>>),
+    ListMany(Node<Expr>, Node<Expr>),
+    Convert(Node<Expr>, Node<Ty>),
 }
 
 impl Expr {
+    pub fn at(self, region: SrcRegion) -> Node<Self> {
+        Node::new(self, region)
+    }
+
     pub fn literal(literal: Literal, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::Literal(literal), region)
     }
@@ -173,6 +198,18 @@ impl Expr {
 
     pub fn structure(fields: Node<Vec<(Node<Interned<String>>, Node<Expr>)>>, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::Structure(fields), region)
+    }
+
+    pub fn list(items: Node<Vec<Node<Expr>>>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::List(items), region)
+    }
+
+    pub fn list_many(item: Node<Expr>, count: Node<Expr>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::ListMany(item, count), region)
+    }
+
+    pub fn convert(expr: Node<Expr>, ty: Node<Ty>, region: SrcRegion) -> Node<Self> {
+        Node::new(Expr::Convert(expr, ty), region)
     }
 
     fn print_debug_depth(&self, ctx: &TokenCtx, depth: usize) {
@@ -248,6 +285,22 @@ impl Expr {
                     expr.print_debug_depth(ctx, depth + 1);
                 }
             },
+            Expr::List(items) => {
+                println!("List:");
+                for item in items.iter() {
+                    item.print_debug_depth(ctx, depth + 1);
+                }
+            },
+            Expr::ListMany(item, count) => {
+                println!("ListMany:");
+                item.print_debug_depth(ctx, depth + 1);
+                count.print_debug_depth(ctx, depth + 1);
+            },
+            Expr::Convert(expr, ty) => {
+                println!("Convert");
+                expr.print_debug_depth(ctx, depth + 1);
+                ty.print_debug_depth(ctx, depth + 1);
+            },
             _ => unimplemented!(),
         }
     }
@@ -257,228 +310,258 @@ impl Expr {
     }
 }
 
-impl ParseError<Token> for Error {
-    fn unexpected(token: Token) -> Self {
-        Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
+impl parze::error::Error<Token> for Error {
+    type Region = SrcRegion;
+    type Thing = Thing;
+    type Context = ();
+
+    fn unexpected_sym(token: &Token, region: SrcRegion) -> Self {
+        Error::unexpected(Thing::Token(token.clone()))
+            .at(region)
     }
 
     fn unexpected_end() -> Self {
         Error::unexpected_eof()
     }
 
-    fn combine(mut self, mut other: Self) -> Self {
-        self.combine(other)
+    fn expected_end(token: &Token, region: SrcRegion) -> Self {
+        Error::expected_eof(token.clone()).at(region)
     }
 }
 
-pub fn parse(tokens: &[Token], ctx: &TokenCtx) -> Result<Node<Expr>, Vec<Error>> {
-    let number = try_map(|tok| match tok {
-        Token { lexeme: Lexeme::Number(i), region }
-            => Ok(Expr::literal(Literal::Number(ctx.numbers.get(i).clone().parse().unwrap()), region)),
-        token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
-            .expected(Thing::Number)),
+pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
+    let expr = declare();
+    let block = declare();
+    let structure = declare();
+    let flow_control = declare();
+    let statement_chain = declare();
+
+    let number = permit_map(|tok| match tok {
+        Token { lexeme: Lexeme::Number(x), region } => Some(Literal::Number(x.parse().unwrap())),
+        token => None,
     });
 
-    let string = try_map(|tok| match tok {
-        Token { lexeme: Lexeme::String(i), region }
-            => Ok(Expr::literal(Literal::String(i), region)),
-        token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
-            .expected(Thing::String)),
+    let string = permit_map(|tok| match tok {
+        Token { lexeme: Lexeme::String(i), .. } => Some(Literal::String(i)),
+        token => None,
     });
 
-    let boolean = try_map(|tok| match tok {
-        Token { lexeme: Lexeme::True, region }
-            => Ok(Expr::literal(Literal::Bool(true), region)),
-        Token { lexeme: Lexeme::False, region }
-            => Ok(Expr::literal(Literal::Bool(false), region)),
-        token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
-            .expected(Thing::Bool)),
+    let boolean = just(Lexeme::True).to(true)
+        .or(just(Lexeme::False).to(false))
+        .map(|x| Literal::Bool(x));
+
+    let literal = number
+        .or(string)
+        .or(boolean)
+        .or(just("null").map(|_| Literal::Null))
+        .map_with_region(|x, region| Expr::Literal(x).at(region));
+
+    let ident = permit_map(|tok| match tok {
+        Token { lexeme: Lexeme::Ident(i), region } => Some(i),
+        token => None,
     });
 
-    let ident = try_map(|tok| match tok {
-        Token { lexeme: Lexeme::Ident(i), region }
-            => Ok(Node::new(i, region)),
-        token => Err(Error::unexpected(Thing::Lexeme(token.lexeme))
-            .at(token.region)
-            .expected(Thing::Ident)),
-    });
+    let ty = just("char").map(|_| Ty::Char)
+        .or(just("num").map(|_| Ty::Num))
+        .or(just("str").map(|_| Ty::Str))
+        .map_with_region(|ty, region| Node::new(ty, region));
 
-    parsers! {
-        atom = {
-            | ident => { |ident| {
-                let region = ident.region;
-                Expr::ident(ident.into_inner(), region)
-            } }
-            | number
-            | string
-            | boolean
-            | "null" => { |t: Token| Expr::literal(Literal::Null, t.region) }
-            | '(' -& expr &- ')'
-            | block
-            | structure
-            | flow_control
-            | '|' -& param_list &- '|' & expr => { |(params, body): (Node<Vec<Node<Interned<String>>>>, _)| {
-                let region = params.region.union(body.region);
-                Expr::func(params, body, region)
-            } }
-        }
+    let list = expr
+        .link()
+        .separated_by(just(','))
+        .map_with_region(|items, region| Node::new(items, region));
 
-        access = {
-            | atom & (
-                // This is a bit horrid. Use boxed fns to get left-recursion working
-                | '(' -& list &- ')' => { |list: Node<Vec<Node<Expr>>>| Box::new(|expr: Node<Expr>| {
-                    let region = list.region.union(expr.region);
-                    Expr::call(expr, list, region)
-                }) as Box<dyn FnOnce(_) -> _> }
-                | '[' -& list &- ']' => { |list| Box::new(|expr: Node<Expr>| {
-                    list
-                        .into_inner()
-                        .into_iter()
-                        .fold(expr, |expr, index| {
-                            let region = expr.region.union(index.region);
-                            Expr::index(expr, index, region)
-                        })
-                }) as Box<dyn FnOnce(_) -> _> }
-                | '.' -& ident => { |field| Box::new(|expr: Node<Expr>| {
-                    let region = field.region.union(expr.region);
-                    Expr::field(expr, field, region)
-                }) as Box<dyn FnOnce(_) -> _> }
-            )* :> { |a, f| {
-                f(a)
-            } }
-        }
+    let atom = literal
+        .or(ident.clone().map_with_region(|x, region| Expr::Ident(x).at(region)))
+        .or(just('(').padding_for(expr.link()).padded_by(just(')')))
+        .or(just('[')
+            .padding_for(expr.link())
+            .padded_by(just(';'))
+            .then(expr.link())
+            .padded_by(just(']'))
+            .map_with_region(|(item, count), region| Expr::ListMany(item, count).at(region)))
+        .or(just('[')
+            .padding_for(list.clone())
+            .padded_by(just(']'))
+            .map_with_region(|list, region| Expr::List(list).at(region)))
+        .or(block.link())
+        .or(structure.link())
+        .or(flow_control.link())
+        .or(just('|')
+            .padding_for(ident
+                .clone()
+                .map_with_region(|ident, region| Node::new(ident, region))
+                .separated_by(just(',')))
+            .padded_by(just('|'))
+            .map_with_region(|params, region| Node::new(params, region))
+            .then(expr.link())
+            .map_with_region(|(params, body), region| Expr::func(params, body, region)))
+        .boxed();
 
-        unary = {
-            (
-                | '-' => { |op: Token| (UnaryOp::Neg, op.region) }
-                | '!' => { |op: Token| (UnaryOp::Not, op.region) }
-            )* & access <: { |(op, op_region), a| {
-                let region = op_region.union(a.region);
-                Expr::unary(Node::new(op, op_region), a, region)
-            } }
-        }
+    let access = atom
+        .then(just('(')
+            .padding_for(list.clone())
+            .padded_by(just(')'))
+            .map(|list| Box::new(|expr: Node<Expr>| {
+                let region = expr.region.union(list.region);
+                Expr::Call(expr, list).at(region)
+            }) as Box<dyn FnOnce(_) -> _>)
+            .or(just('[')
+                .padding_for(list.clone())
+                .padded_by(just(']'))
+                .map(|list| Box::new(move |expr| list
+                    .into_inner()
+                    .into_iter()
+                    .fold(expr, |expr, index| {
+                        let region = index.region;
+                        Expr::Index(expr, index).at(region)
+                    })) as Box<dyn FnOnce(_) -> _>))
+            .or(just('.')
+                .padding_for(ident.clone().map_with_region(|ident, region| Node::new(ident, region)))
+                .map(|field| Box::new(|expr: Node<Expr>| {
+                    let region = expr.region.union(field.region);
+                    Expr::Field(expr, field).at(region)
+                }) as Box<dyn FnOnce(_) -> _>))
+            .repeated())
+        .reduce_left(|expr, f| f(expr))
+        .boxed();
 
-        product = {
-            unary & ((
-                | '*' => { |op: Token| (BinaryOp::Mul, op.region) }
-                | '/' => { |op: Token| (BinaryOp::Div, op.region) }
-                | '%' => { |op: Token| (BinaryOp::Rem, op.region) }
-            ) & unary)* :> { |a: Node<Expr>, ((op, op_region), b)| {
-                let region = op_region.union(a.region).union(b.region);
-                Expr::binary(Node::new(op, op_region), a, b, region)
-            } }
-        }
+    let unary = just('-').map(|_| UnaryOp::Neg)
+        .or(just('!').map(|_| UnaryOp::Not))
+        .map_with_region(|op, region| Node::new(op, region))
+        .repeated()
+        .then(access)
+        .reduce_right(|op, expr| {
+            let region = op.region.union(expr.region);
+            Expr::Unary(op, expr).at(region)
+        });
 
-        sum = {
-            product & ((
-                | '+' => { |op: Token| (BinaryOp::Add, op.region) }
-                | '-' => { |op: Token| (BinaryOp::Sub, op.region) }
-            ) & product)* :> { |a: Node<Expr>, ((op, op_region), b)| {
-                let region = op_region.union(a.region).union(b.region);
-                Expr::binary(Node::new(op, op_region), a, b, region)
-            } }
-        }
+    let suffix = unary
+        .then(just("as").padding_for(ty).repeated())
+        .reduce_left(|expr, ty| {
+            let region = expr.region.union(ty.region);
+            Expr::Convert(expr, ty).at(region)
+        })
+        .boxed();
 
-        comparison = {
-            sum & ((
-                | "==" => { |op: Token| (BinaryOp::Eq, op.region) }
-                | "!=" => { |op: Token| (BinaryOp::NotEq, op.region) }
-                |  "<" => { |op: Token| (BinaryOp::Less, op.region) }
-                | "<=" => { |op: Token| (BinaryOp::LessEq, op.region) }
-                |  ">" => { |op: Token| (BinaryOp::Greater, op.region) }
-                | ">=" => { |op: Token| (BinaryOp::GreaterEq, op.region) }
-            ) & sum)* :> { |a: Node<Expr>, ((op, op_region), b)| {
-                let region = op_region.union(a.region).union(b.region);
-                Expr::binary(Node::new(op, op_region), a, b, region)
-            } }
-        }
+    let product_op = just('*').map(|_| BinaryOp::Mul)
+        .or(just('/').map(|_| BinaryOp::Div))
+        .or(just('%').map(|_| BinaryOp::Rem))
+        .map_with_region(|op, region| Node::new(op, region));
+    let product = suffix.clone()
+        .then(product_op.then(suffix).repeated())
+        .reduce_left(|a, (op, b)| {
+            let region = a.region.union(b.region);
+            Expr::Binary(op, a, b).at(region)
+        });
 
-        mutation = {
-            comparison & ((
-                |  "=" => { |op: Token| (Mutation::Assign, op.region) }
-                | "+=" => { |op: Token| (Mutation::AddAssign, op.region) }
-                | "-=" => { |op: Token| (Mutation::SubAssign, op.region) }
-                | "*=" => { |op: Token| (Mutation::MulAssign, op.region) }
-                | "/=" => { |op: Token| (Mutation::DivAssign, op.region) }
-                | "%=" => { |op: Token| (Mutation::RemAssign, op.region) }
-            ) & comparison)* :> { |a: Node<Expr>, ((op, op_region), b)| {
-                let region = op_region.union(a.region).union(b.region);
-                Expr::mutation(Node::new(op, op_region), a, b, region)
-            } }
-        }
+    let sum_op = just('+').map(|_| BinaryOp::Add)
+        .or(just('-').map(|_| BinaryOp::Sub))
+        .map_with_region(|op, region| Node::new(op, region));
+    let sum = product.clone()
+        .then(sum_op.then(product).repeated())
+        .reduce_left(|a, (op, b)| {
+            let region = a.region.union(b.region);
+            Expr::Binary(op, a, b).at(region)
+        })
+        .boxed();
 
-        expr = { mutation }
+    let comparison_op = just("==").map(|_| BinaryOp::Eq)
+        .or(just("!=").map(|_| BinaryOp::NotEq))
+        .or(just("<").map(|_| BinaryOp::Less))
+        .or(just("<=").map(|_| BinaryOp::LessEq))
+        .or(just(">").map(|_| BinaryOp::Greater))
+        .or(just(">=").map(|_| BinaryOp::GreaterEq))
+        .map_with_region(|op, region| Node::new(op, region));
+    let comparison = sum.clone()
+        .then(comparison_op.then(sum).repeated())
+        .reduce_left(|a, (op, b)| {
+            let region = a.region.union(b.region);
+            Expr::Binary(op, a, b).at(region)
+        });
 
-        param_list = {
-            (ident ... ',') &- ','? => { |idents| {
-                let region = idents
-                    .iter()
-                    .fold(SrcRegion::none(), |a, i| a.union(i.region));
-                Node::new(idents, region)
-            } }
-        }
+    let logical_op = just("and").map(|_| BinaryOp::And)
+        .or(just("or").map(|_| BinaryOp::Or))
+        .or(just("xor").map(|_| BinaryOp::Xor))
+        .map_with_region(|op, region| Node::new(op, region));
+    let logical = comparison.clone()
+        .then(logical_op.then(comparison).repeated())
+        .reduce_left(|a, (op, b)| {
+            let region = a.region.union(b.region);
+            Expr::Binary(op, a, b).at(region)
+        });
 
-        list = {
-            (expr ... ',') &- ','? => { |exprs| {
-                let region = exprs
-                    .iter()
-                    .fold(SrcRegion::none(), |a, e| a.union(e.region));
-                Node::new(exprs, region)
-            } }
-        }
+    let mutation_op = just("=").map(|_| Mutation::Assign)
+        .or(just("+=").map(|_| Mutation::AddAssign))
+        .or(just("-=").map(|_| Mutation::SubAssign))
+        .or(just("*=").map(|_| Mutation::MulAssign))
+        .or(just("/=").map(|_| Mutation::DivAssign))
+        .or(just("%=").map(|_| Mutation::RemAssign))
+        .map_with_region(|op, region| Node::new(op, region));
+    let mutation = logical.clone()
+        .then(mutation_op.then(logical).repeated())
+        .reduce_left(|a, (op, b)| {
+            let region = a.region.union(b.region);
+            Expr::Mutation(op, a, b).at(region)
+        });
 
-        flow_control = {
-            | "if" & expr & block & block? => { |(((fi, pred), tblock), fblock)| {
-                let region = fi.region
-                    .union(pred.region)
-                    .union(tblock.region)
-                    .union(fblock.as_ref().map(|b| b.region).unwrap_or(SrcRegion::none()));
-                Expr::if_else(
-                    pred,
-                    tblock,
-                    fblock.unwrap_or(Expr::literal(Literal::Null, SrcRegion::none())),
-                    region,
-                )
-            } }
-            | "while" & expr & block => { |((elihw, pred), block)| {
-                let region = elihw.region
-                    .union(pred.region)
-                    .union(block.region);
-                Expr::while_loop(
-                    pred,
-                    block,
-                    region,
-                )
-            } }
-        }
+    let expr = expr.define(mutation.boxed());
 
-        statement_chain = {
-            | "var" -& ident &- '=' & expr &- ';' & statement_chain => { |((ident, expr), then)| {
-                let region = ident.region.union(expr.region);
-                Expr::var(ident, expr, then, region)
-            } }
-            | flow_control & statement_chain => { |(expr, then)| Expr::this_then(expr, then, SrcRegion::none()) }
-            | expr &- ';' & statement_chain => { |(expr, then)| Expr::this_then(expr, then, SrcRegion::none()) }
-            | expr
-            | { empty() } => { |_| Expr::literal(Literal::Null, SrcRegion::none()) }
-        }
-        block = { '{' -& statement_chain &- '}' }
+    let flow_control_p = flow_control.link();
+    let flow_control = flow_control.define(block.link()
+        .or(just("if")
+            .padding_for(expr.clone())
+            .then(block.link())
+            .then(just("else")
+                .padding_for(flow_control_p.clone())
+                .or_not())
+            .map_with_region(|((pred, t_block), f_block), region| {
+                Expr::IfElse(pred, t_block, f_block.unwrap_or(Expr::Literal(Literal::Null).at(region)))
+                    .at(region)
+            }))
+        .or(just("while")
+            .padding_for(expr.clone())
+            .then(block.link())
+            .map_with_region(|(pred, block), region| Expr::While(pred, block).at(region))))
+        .boxed();
 
-        field = { ident &- ':' & expr }
-        field_list = {
-            (field ... ',') &- ','? => { |fields| {
-                let region = fields
-                    .iter()
-                    .fold(SrcRegion::none(), |a, f| a.union(f.0.region).union(f.1.region));
-                Expr::structure(Node::new(fields, region), region)
-            } }
-        }
-        structure = { '{' -& field_list &- '}' }
-    }
+    let statement_chain_p = statement_chain.link();
+    let statement_chain = statement_chain.define(just("var")
+            .padding_for(ident.clone().map_with_region(|ident, region| Node::new(ident, region)))
+            .padded_by(just('='))
+            .then(expr.clone())
+            .padded_by(just(';'))
+            .then(statement_chain_p.clone().or_not())
+            .map_with_region(|((ident, expr), then), region|
+                Expr::Var(ident, expr, then.unwrap_or(Expr::Literal(Literal::Null).at(region)))
+                    .at(region))
+        .or(flow_control.clone()
+            .then(statement_chain_p.clone().or_not())
+            .map_with_region(|(expr, then), region| Expr::ThisThen(expr, then.unwrap_or(Expr::Literal(Literal::Null).at(region)))
+                .at(region)))
+        .or(expr.clone()
+            .then(just(';').padding_for(statement_chain_p.clone().or_not()))
+            .map_with_region(|(expr, then), region| Expr::ThisThen(expr, then.unwrap_or(Expr::Literal(Literal::Null).at(region))).at(region)))
+        .or(expr.clone()))
+        .boxed();
 
-    statement_chain.parse(tokens).map_err(|err| vec![err])
+    let block = block.define(just('{')
+        .padding_for(statement_chain.clone())
+        .padded_by(just('}')));
+
+    let field = ident.clone()
+        .map_with_region(|ident, region| Node::new(ident, region))
+        .padded_by(just(':'))
+        .then(expr.clone());
+    let field_list = field
+        .separated_by(just(','));
+    let structure = structure.define(just('{')
+        .padding_for(field_list.map_with_region(|fields, region| Node::new(fields, region)))
+        .padded_by(just('}'))
+        .map_with_region(|fields, region| {
+            Expr::Structure(fields).at(region)
+        }))
+        .boxed();
+
+    statement_chain.padded_by(end()).parse(tokens.iter().cloned())
 }

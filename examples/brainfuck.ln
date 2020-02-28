@@ -1,0 +1,58 @@
+var Brainfuck = {
+	new: || {
+		{
+			tape: [0; 10000],
+			tape_ptr: 0,
+
+			execute: |code| {
+				var code_ptr = 0;
+
+				code += "!";
+				var running = true;
+				var output = "";
+
+				while running {
+					var instr = code[code_ptr];
+					if instr == "!" {
+						running = false;
+					} else if instr == ">" {
+						self.tape_ptr += 1;
+					} else if instr == "<" {
+						self.tape_ptr -= 1;
+					} else if instr == "+" {
+						self.tape[self.tape_ptr] = (self.tape[self.tape_ptr] + 257) % 256;
+					} else if instr == "-" {
+						self.tape[self.tape_ptr] = (self.tape[self.tape_ptr] + 255) % 256;
+					} else if instr == "[" and self.tape[self.tape_ptr] == 0 {
+						code_ptr += 1;
+						var balance = 0;
+						while code[code_ptr] != "]" or balance != 0 {
+							if code[code_ptr] == "[" { balance += 1; }
+							if code[code_ptr] == "]" { balance -= 1; }
+							code_ptr += 1;
+						}
+					} else if instr == "]" and self.tape[self.tape_ptr] != 0 {
+						code_ptr -= 1;
+						var balance = 0;
+						while code[code_ptr] != "[" or balance != 0 {
+							if code[code_ptr] == "[" { balance += 1; }
+							if code[code_ptr] == "]" { balance -= 1; }
+							code_ptr -= 1;
+						}
+					} else if instr == "." {
+						output += self.tape[self.tape_ptr] as char;
+					}
+
+					code_ptr += 1;
+				}
+
+				output
+			},
+		}
+	},
+};
+
+var hello_world = "++++++++++[>+++++++>++++++++++>+++>+<<<<-]>++.>+.+++++++..+++.>++.<<+++++++++++++++.>.+++.------.--------.>+.>.";
+
+var bf = Brainfuck.new();
+bf.execute(hello_world)

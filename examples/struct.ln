@@ -23,4 +23,6 @@ var foo = {
 	thing: |x| self.bar.thing(x),
 };
 
+foo.bar.boo.far += 10;
+
 foo.thing(10)
