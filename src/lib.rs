@@ -4,6 +4,7 @@ mod lex;
 mod parse;
 mod util;
 mod walker;
+mod bytecode;
 
 use self::{
     util::SrcRegion,
