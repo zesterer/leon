@@ -7,6 +7,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
 };
+use lazy_static::lazy_static;
 use crate::{
     parse::{
         Node,
@@ -17,7 +18,7 @@ use crate::{
         BinaryOp,
         Mutation,
     },
-    util::{Interned, InternTable},
+    util::{Interned, InternTable, SrcRegion},
     object::{self, Object},
 };
 
@@ -92,7 +93,33 @@ impl<'a> fmt::Debug for Value<'a> {
     }
 }
 
+lazy_static! {
+    static ref PHONEY_PARAMS: Node<Vec<Node<Interned<String>>>> = Node::new(Vec::new(), SrcRegion::none());
+    static ref PHONEY_EXPR: Node<Expr> = Node::new(Expr::Literal(Literal::Null), SrcRegion::none());
+}
+
 impl<'a> Value<'a> {
+    // TODO: Get rid of this
+    pub(crate) fn into_static(self) -> Value<'static> {
+        match self {
+            Value::String(x) => Value::String(x),
+            Value::Number(x) => Value::Number(x),
+            Value::Bool(x) => Value::Bool(x),
+            Value::Null => Value::Null,
+            Value::Func(_, _) => Value::Func(&PHONEY_PARAMS, &PHONEY_EXPR),
+            Value::Structure(fields) => Value::Structure(fields
+                .into_iter()
+                .map(|(i, x)| (i, x.into_static()))
+                .collect()),
+            Value::Ref(x) => Value::Ref(Rc::new(RefCell::new(x.borrow().clone().into_static()))),
+            Value::List(items) => Value::List(items
+                .into_iter()
+                .map(Self::into_static)
+                .collect()),
+            Value::Custom(x) => Value::Custom(x),
+        }
+    }
+
     pub fn extract<T: Object + Clone>(self) -> Option<T> {
         match self {
             Self::Custom(x) => x.as_any().downcast_ref().cloned(),
@@ -560,7 +587,7 @@ impl<'a> AbstractMachine<'a> {
         Ok((None, val))
     }
 
-    pub fn execute(mut self, expr: &'a Node<Expr>) -> Result<Value<'a>, ExecError> {
-        Ok(self.exec(expr)?.1)
+    pub fn execute(mut self, expr: &'a Node<Expr>) -> Result<Value<'static>, ExecError> {
+        Ok(self.exec(expr)?.1.into_static())
     }
 }

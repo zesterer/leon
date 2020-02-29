@@ -16,7 +16,7 @@ pub use error::{ErrorKind, Error, Thing};
 pub struct Engine;
 
 impl Engine {
-    pub fn exec(&mut self, code: &str, globals: Vec<(String, Box<dyn Object>)>) -> Result<(), Vec<Error>> {
+    pub fn exec(&mut self, code: &str, globals: Vec<(String, Box<dyn Object>)>) -> Result<Value<'static>, Vec<Error>> {
         let (tokens, ctx) = lex::lex(code)?;
 
         //println!("--- Tokens ---");
@@ -35,8 +35,6 @@ impl Engine {
         walker::AbstractMachine::new(ctx.strings, ctx.idents)
             .with_globals(globals)
             .execute(&ast)
-            .unwrap();
-
-        Ok(())
+            .map_err(|_| Vec::new()) // TODO
     }
 }

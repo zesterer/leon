@@ -60,9 +60,9 @@ fn main() {
                 "myvec".into(),
                 Box::new(MyVec3::new(1.0, 1.0, 1.0))
         )))
+        .unwrap()
+        .extract::<MyVec3>()
         .unwrap();
-        //.extract::<MyVec3>()
-        //.unwrap();
 
     println!("{:?}", vec3);
 }
