@@ -93,6 +93,13 @@ impl<'a> fmt::Debug for Value<'a> {
 }
 
 impl<'a> Value<'a> {
+    pub fn extract<T: Object + Clone>(self) -> Option<T> {
+        match self {
+            Self::Custom(x) => x.as_any().downcast_ref().cloned(),
+            _ => None,
+        }
+    }
+
     fn from_literal(l: &Literal, machine: &AbstractMachine<'a>) -> Self {
         match l {
             Literal::String(i) => Value::String(machine.strings.get(*i).clone()),

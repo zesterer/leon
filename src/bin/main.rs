@@ -13,8 +13,9 @@ fn main() {
             .read_to_string(&mut buf)
             .unwrap_or_else(|err| panic!("Could not read file '{}': {:?}", arg, err));
 
-        Engine::default()
-            .execute(&buf, vec![])
-            .unwrap();
+        let result = Engine::default()
+            .exec(&buf, vec![]);
+
+        println!("{:?}", result);
     }
 }

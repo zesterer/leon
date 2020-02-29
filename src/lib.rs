@@ -16,11 +16,11 @@ pub use error::{ErrorKind, Error, Thing};
 pub struct Engine;
 
 impl Engine {
-    pub fn execute(&mut self, code: &str, globals: Vec<(String, Box<dyn Object>)>) -> Result<(), Vec<Error>> {
+    pub fn exec(&mut self, code: &str, globals: Vec<(String, Box<dyn Object>)>) -> Result<(), Vec<Error>> {
         let (tokens, ctx) = lex::lex(code)?;
 
         //println!("--- Tokens ---");
-        ctx.print_debug(&tokens);
+        //ctx.print_debug(&tokens);
 
         let mut ast = parse::parse(&tokens).map_err(|errs| {
             for err in &errs {
@@ -29,15 +29,13 @@ impl Engine {
             errs
         })?;
 
-        println!("--- Syntax Tree ---");
-        ast.print_debug(&ctx);
+        //println!("--- Syntax Tree ---");
+        //ast.print_debug(&ctx);
 
-        let result = walker::AbstractMachine::new(ctx.strings, ctx.idents)
+        walker::AbstractMachine::new(ctx.strings, ctx.idents)
             .with_globals(globals)
             .execute(&ast)
             .unwrap();
-
-        println!("{:?}", result);
 
         Ok(())
     }
