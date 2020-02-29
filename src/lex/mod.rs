@@ -1,6 +1,3 @@
-use std::{
-    fmt,
-};
 use internment::LocalIntern;
 use crate::{
     util::{Interned, InternTable, SrcLoc, SrcRegion},

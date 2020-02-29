@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     ops::{Deref, DerefMut},
 };
 use parze::prelude::*;

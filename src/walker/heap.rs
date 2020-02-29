@@ -1,5 +1,4 @@
 use std::cell::Cell;
-use super::*;
 
 const BIN_LEN_LOG2: usize = 8;
 

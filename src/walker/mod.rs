@@ -4,11 +4,10 @@ mod value;
 use std::{
     fmt,
     rc::Rc,
-    cell::{RefCell, Ref},
+    cell::RefCell,
     collections::HashMap,
 };
 use crate::{
-    lex::TokenCtx,
     parse::{
         Node,
         Expr,
@@ -20,7 +19,6 @@ use crate::{
     },
     util::{Interned, InternTable},
     object::{self, Object},
-    box_val::BoxVal,
 };
 
 #[derive(Clone, Debug)]
@@ -40,7 +38,12 @@ pub enum ExecError {
     InvalidLength,
 }
 
-#[derive(Clone)]
+impl From<object::InvalidOperation> for ExecError {
+    fn from(object::InvalidOperation(string): object::InvalidOperation) -> Self {
+        Self::InvalidObjOperation(string)
+    }
+}
+
 pub enum Value<'a> {
     String(String),
     Number(f64),
@@ -50,7 +53,22 @@ pub enum Value<'a> {
     Structure(HashMap<Interned<String>, Self>),
     Ref(Rc<RefCell<Self>>),
     List(Vec<Self>),
-    Custom(BoxVal<dyn Object>),
+    Custom(Box<dyn Object>),
+}
+
+impl<'a> Clone for Value<'a> {
+    fn clone(&self) -> Self {
+        match self {
+            Value::String(v) => Value::String(v.clone()),
+            Value::Number(v) => Value::Number(*v),
+            Value::Null => Value::Null,
+            Value::Func(a, b) => Value::Func(a, b),
+            Value::Structure(v) => Value::Structure(v.clone()),
+            Value::Ref(v) => Value::Ref(v.clone()),
+            Value::List(v) => Value::List(v.clone()),
+            Value::Custom(v) => Value::Custom(v.cloned()),
+        }
+    }
 }
 
 impl<'a> fmt::Debug for Value<'a> {
@@ -85,7 +103,7 @@ impl<'a> Value<'a> {
     fn truth(&self) -> Result<bool, ExecError> {
         match self {
             Value::Bool(x) => Ok(*x),
-            Value::Custom(x) => Ok(x.truth()),
+            Value::Custom(x) => Ok(x.truth()?),
             _ => Err(ExecError::NotTruthy),
         }
     }
@@ -93,7 +111,7 @@ impl<'a> Value<'a> {
     fn apply_not(self) -> Result<Self, ExecError> {
         match self {
             Value::Bool(a) => Ok(Value::Bool(!a)),
-            Value::Custom(a) => Ok(a.not()),
+            Value::Custom(a) => Ok(a.not()?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -101,7 +119,7 @@ impl<'a> Value<'a> {
     fn apply_neg(self) -> Result<Self, ExecError> {
         match self {
             Value::Number(a) => Ok(Value::Number(-a)),
-            Value::Custom(a) => Ok(a.neg()),
+            Value::Custom(a) => Ok(a.neg()?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -121,7 +139,7 @@ impl<'a> Value<'a> {
                 a.push(b);
                 Ok(Value::List(a))
             },
-            (Value::Custom(a), b) => Ok(a.add(b)),
+            (Value::Custom(a), b) => Ok(a.add(&b)?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -129,7 +147,7 @@ impl<'a> Value<'a> {
     fn apply_sub(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
-            (Value::Custom(a), b) => Ok(a.sub(b)),
+            (Value::Custom(a), b) => Ok(a.sub(&b)?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -137,7 +155,7 @@ impl<'a> Value<'a> {
     fn apply_mul(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
-            (Value::Custom(a), b) => Ok(a.mul(b)),
+            (Value::Custom(a), b) => Ok(a.mul(&b)?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -145,7 +163,7 @@ impl<'a> Value<'a> {
     fn apply_div(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a / b)),
-            (Value::Custom(a), b) => Ok(a.div(b)),
+            (Value::Custom(a), b) => Ok(a.div(&b)?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -153,7 +171,7 @@ impl<'a> Value<'a> {
     fn apply_rem(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a % b)),
-            (Value::Custom(a), b) => Ok(a.rem(b)),
+            (Value::Custom(a), b) => Ok(a.rem(&b)?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -164,7 +182,7 @@ impl<'a> Value<'a> {
             (Value::String(a), Value::String(b)) => Ok(Value::Bool(a == b)),
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a == b)),
             (Value::Null, Value::Null) => Ok(Value::Bool(true)),
-            (Value::Custom(a), b) => Ok(a.eq(b)),
+            (Value::Custom(a), b) => Ok(Value::Bool(a.eq(&b)?)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -175,7 +193,7 @@ impl<'a> Value<'a> {
             (Value::String(a), Value::String(b)) => Ok(Value::Bool(a != b)),
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a != b)),
             (Value::Null, Value::Null) => Ok(Value::Bool(false)),
-            (Value::Custom(a), b) => Ok(!a.eq(b)),
+            (Value::Custom(a), b) => Ok(Value::Bool(!a.eq(&b)?)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -183,7 +201,7 @@ impl<'a> Value<'a> {
     fn apply_less(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a < b)),
-            (Value::Custom(a), b) => Ok(a.less(b)),
+            (Value::Custom(a), b) => Ok(Value::Bool(a.less(&b)?)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -191,7 +209,7 @@ impl<'a> Value<'a> {
     fn apply_greater(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Bool(a > b)),
-            (Value::Custom(a), b) => Ok(a.greater(b)),
+            (Value::Custom(a), b) => Ok(Value::Bool(a.greater(&b)?)),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -199,6 +217,7 @@ impl<'a> Value<'a> {
     fn apply_and(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
+            (Value::Custom(a), b) => Ok(a.and(&b)?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -206,6 +225,7 @@ impl<'a> Value<'a> {
     fn apply_or(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
+            (Value::Custom(a), b) => Ok(a.or(&b)?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -213,6 +233,7 @@ impl<'a> Value<'a> {
     fn apply_xor(self, rhs: Self) -> Result<Self, ExecError> {
         match (self, rhs) {
             (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a != b)),
+            (Value::Custom(a), b) => Ok(a.xor(&b)?),
             _ => Err(ExecError::InvalidOperation),
         }
     }
@@ -222,7 +243,7 @@ impl<'a> Value<'a> {
         Ok(())
     }
 
-    fn apply_add_assign(&mut self, mut rhs: Self) -> Result<(), ExecError> {
+    fn apply_add_assign<'b: 'a>(&mut self, mut rhs: Value<'b>) -> Result<(), ExecError> {
         match (self, &mut rhs) {
             (Value::Number(a), Value::Number(b)) => {
                 *a += *b;
@@ -239,8 +260,9 @@ impl<'a> Value<'a> {
             (Value::List(a), _) => {
                 a.push(rhs);
                 Ok(())
+            }
             (Value::Custom(a), b) => {
-                *self = a.add(b);
+                *self = a.add(b)?;
                 Ok(())
             },
             _ => Err(ExecError::InvalidOperation),
@@ -248,9 +270,13 @@ impl<'a> Value<'a> {
     }
 
     fn apply_sub_assign(&mut self, mut rhs: Self) -> Result<(), ExecError> {
-        match (self, &mut rhs) {
+        match (self, &rhs) {
             (Value::Number(a), Value::Number(b)) => {
                 *a -= *b;
+                Ok(())
+            }
+            (Value::Custom(a), b) => {
+                *self = a.add(b)?;
                 Ok(())
             },
             _ => Err(ExecError::InvalidOperation),
@@ -268,7 +294,7 @@ impl<'a> Value<'a> {
                 .get(b as usize)
                 .cloned()
                 .ok_or(ExecError::OutOfRange),
-            (Value::Custom(a), b) => Ok(a.index(b)),
+            (Value::Custom(a), b) => Ok(a.index(&b)?),
             _ => Err(ExecError::InvalidOperation),
         }
     }

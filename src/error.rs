@@ -1,4 +1,4 @@
-use self::{
+use crate::{
     util::SrcRegion,
     lex::{Token, Lexeme},
 };
@@ -50,7 +50,7 @@ pub enum ErrorKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Error {
     kind: ErrorKind,
-    region: Option<SrcRegion>,
+    pub region: Option<SrcRegion>,
     while_parsing: Vec<Thing>,
     expected: Vec<Thing>,
     hint: Option<&'static str>,
