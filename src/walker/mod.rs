@@ -243,7 +243,7 @@ impl<'a> Value<'a> {
         Ok(())
     }
 
-    fn apply_add_assign<'b: 'a>(&mut self, mut rhs: Value<'b>) -> Result<(), ExecError> {
+    fn apply_add_assign(&mut self, mut rhs: Self) -> Result<(), ExecError> {
         match (self, &mut rhs) {
             (Value::Number(a), Value::Number(b)) => {
                 *a += *b;
@@ -258,11 +258,11 @@ impl<'a> Value<'a> {
                 Ok(())
             },
             (Value::List(a), _) => {
-                a.push(rhs);
+                a.push(rhs.clone());
                 Ok(())
             }
             (Value::Custom(a), b) => {
-                *self = a.add(b)?;
+                a.add_assign(b)?;
                 Ok(())
             },
             _ => Err(ExecError::InvalidOperation),
@@ -270,13 +270,13 @@ impl<'a> Value<'a> {
     }
 
     fn apply_sub_assign(&mut self, mut rhs: Self) -> Result<(), ExecError> {
-        match (self, &rhs) {
+        match (self, &mut rhs) {
             (Value::Number(a), Value::Number(b)) => {
                 *a -= *b;
                 Ok(())
             }
             (Value::Custom(a), b) => {
-                *self = a.add(b)?;
+                a.sub_assign(b)?;
                 Ok(())
             },
             _ => Err(ExecError::InvalidOperation),
@@ -422,14 +422,14 @@ impl<'a> AbstractMachine<'a> {
                 let fields = fields
                     .iter()
                     .map(|(ident, expr)| Ok((**ident, self.exec(expr)?.1)))
-                    .collect::<Result<_, _>>()?;
+                    .collect::<Result<_, ExecError>>()?;
                 Value::Structure(fields).into_ref()?
             },
             Expr::List(items) => {
                 let items = items
                     .iter()
                     .map(|item| Ok(self.exec(item)?.1))
-                    .collect::<Result<_, _>>()?;
+                    .collect::<Result<_, ExecError>>()?;
                 Value::List(items)
             },
             Expr::ListMany(item, count) => {
