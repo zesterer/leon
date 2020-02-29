@@ -5,7 +5,7 @@ mod parse;
 mod util;
 mod walker;
 mod bytecode;
-mod object;
+pub mod object;
 mod error;
 
 pub use walker::Value;
@@ -16,13 +16,13 @@ pub use error::{ErrorKind, Error, Thing};
 pub struct Engine;
 
 impl Engine {
-    pub fn execute(&mut self, code: &str) -> Result<(), Vec<Error>> {
+    pub fn execute(&mut self, code: &str, globals: Vec<(String, Box<dyn Object>)>) -> Result<(), Vec<Error>> {
         let (tokens, ctx) = lex::lex(code)?;
 
         //println!("--- Tokens ---");
         ctx.print_debug(&tokens);
 
-        let ast = parse::parse(&tokens).map_err(|errs| {
+        let mut ast = parse::parse(&tokens).map_err(|errs| {
             for err in &errs {
                 println!("Location: {:?}", err.region.map(|region| region.in_context(code)));
             }
@@ -33,6 +33,7 @@ impl Engine {
         ast.print_debug(&ctx);
 
         let result = walker::AbstractMachine::new(ctx.strings, ctx.idents)
+            .with_globals(globals)
             .execute(&ast)
             .unwrap();
 

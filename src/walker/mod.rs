@@ -61,6 +61,7 @@ impl<'a> Clone for Value<'a> {
         match self {
             Value::String(v) => Value::String(v.clone()),
             Value::Number(v) => Value::Number(*v),
+            Value::Bool(v) => Value::Bool(*v),
             Value::Null => Value::Null,
             Value::Func(a, b) => Value::Func(a, b),
             Value::Structure(v) => Value::Structure(v.clone()),
@@ -86,6 +87,7 @@ impl<'a> fmt::Debug for Value<'a> {
                 .join(", ")),
             Value::Ref(val) => write!(f, "ref {:?}", *val.borrow()),
             Value::List(items) => write!(f, "{:?}", items),
+            Value::Custom(custom) => custom.fmt(f),
         }
     }
 }
@@ -261,7 +263,7 @@ impl<'a> Value<'a> {
                 a.push(rhs.clone());
                 Ok(())
             }
-            (Value::Custom(a), b) => {
+            (Value::Custom(a), ref b) => {
                 a.add_assign(b)?;
                 Ok(())
             },
@@ -275,7 +277,7 @@ impl<'a> Value<'a> {
                 *a -= *b;
                 Ok(())
             }
-            (Value::Custom(a), b) => {
+            (Value::Custom(a), ref b) => {
                 a.sub_assign(b)?;
                 Ok(())
             },
@@ -371,6 +373,15 @@ impl<'a> AbstractMachine<'a> {
             idents,
             stack: Vec::new(),
         }
+    }
+
+    pub fn with_globals(mut self, globals: Vec<(String, Box<dyn Object>)>) -> Self {
+        globals.into_iter().for_each(|(ident, custom)| {
+            let ident = self.idents.intern(ident);
+            self.stack.push(Some((ident, Value::Custom(custom))))
+        });
+
+        self
     }
 
     fn value_mut_with<'b>(&'b mut self, lvalue: &'a Node<Expr>, f: Box<dyn FnOnce(&mut Value<'a>) -> Result<(), ExecError> + 'b>) -> Result<(), ExecError> {

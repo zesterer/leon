@@ -14,7 +14,7 @@ fn main() {
             .unwrap_or_else(|err| panic!("Could not read file '{}': {:?}", arg, err));
 
         Engine::default()
-            .execute(&buf)
+            .execute(&buf, vec![])
             .unwrap();
     }
 }

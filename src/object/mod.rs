@@ -12,7 +12,8 @@ impl From<&str> for InvalidOperation {
     }
 }
 
-pub trait Object: 'static {
+pub trait Object: std::fmt::Debug + std::any::Any {
+    fn cloned(&self) -> Box<dyn Object>;
     fn call<'a>(&self, args: &[Value<'a>]) -> Result<Value<'a>, InvalidOperation> { Err("Not callable!".into()) }
     fn truth(&self) -> Result<bool, InvalidOperation> { Err("Not truthable!".into()) }
     fn not<'a>(&self) -> Result<Value<'a>, InvalidOperation> { Err("Not notable!".into()) }
@@ -20,6 +21,8 @@ pub trait Object: 'static {
     // Use &Value ??
     fn add<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not addable!".into()) }
     fn sub<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not subable!".into()) }
+    fn add_assign(&mut self, rhs: &Value) -> Result<(), InvalidOperation> { Err("Not add assignable!".into()) }
+    fn sub_assign(&mut self, rhs: &Value) -> Result<(), InvalidOperation> { Err("Not sub assignable!".into()) }
     fn mul<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not multiplyable!".into()) }
     fn div<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not dividable!".into()) }
     fn rem<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not remainderable!".into()) }
@@ -32,5 +35,4 @@ pub trait Object: 'static {
     fn index<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not indexable!".into()) }
     //fn mutate_field(&self, field: &Interned<String>, f: impl FnOnce(&mut Self) -> Result<(), ExecError>)
     //field and reciever?
-    fn cloned(&self) -> Box<dyn Object>;
 }
