@@ -353,7 +353,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
         Default,
         Ident(SrcLoc, String),
         String(SrcLoc, String),
-        Number(SrcLoc, String),
+        Number(SrcLoc, String, bool),
         Operator(SrcLoc, OpState),
         LineComment,
     }
@@ -380,7 +380,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                 Some('"') => state = State::String(loc, String::new()),
                 Some('#') => state = State::LineComment,
                 Some(c) if c.is_alphabetic() || c == '_' => state = State::Ident(loc, Some(c).iter().collect()),
-                Some(c) if c.is_numeric() => state = State::Number(loc, Some(c).iter().collect()),
+                Some(c) if c.is_numeric() => state = State::Number(loc, Some(c).iter().collect(), false),
                 Some(c) if is_operator_part(c) => {
                     to_next = false;
                     state = State::Operator(loc, OpState::empty());
@@ -433,7 +433,11 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                     state = State::Default;
                 },
             },
-            State::Number(start, number) => match c {
+            State::Number(start, number, seen_dot) => match c {
+                Some('.') if !*seen_dot => {
+                    *seen_dot = true;
+                    number.push('.');
+                },
                 Some(c) if c.is_alphanumeric() || c == '_' => number.push(c),
                 _ => {
                     tokens.push(Token::new(Lexeme::Number(LocalIntern::new(number.clone())), SrcRegion::range(*start, loc.next())));

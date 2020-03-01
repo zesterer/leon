@@ -1,5 +1,5 @@
 const SCRIPT: &str = "
-    var test = myvec + 4 + myvec.sum();
+    var test = myvec + 4.0 + myvec.sum();
     test
 ";
 
