@@ -569,7 +569,6 @@ impl<'a> AbstractMachine<'a> {
                             self.stack.pop();
                         }
                         self.stack.pop();
-                        self.stack.pop();
                         val
                     } else {
                         return Err(ExecError::WrongNumberOfArgs);

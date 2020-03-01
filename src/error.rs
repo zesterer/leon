@@ -1,6 +1,7 @@
 use crate::{
     util::SrcRegion,
     lex::{Token, Lexeme},
+    bytecode::ExecError,
 };
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
@@ -123,5 +124,11 @@ impl From<ErrorKind> for Error {
             expected: Default::default(),
             hint: None,
         }
+    }
+}
+
+impl From<ExecError> for Error {
+    fn from(err: ExecError) -> Self {
+        todo!()
     }
 }

@@ -4,7 +4,7 @@ mod lex;
 mod parse;
 mod util;
 mod walker;
-//mod bytecode;
+mod bytecode;
 pub mod object;
 mod error;
 

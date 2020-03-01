@@ -67,6 +67,7 @@ pub enum UnaryOp {
 
     Clone,
     Mirror,
+    Ref,
 }
 
 #[derive(Debug)]
@@ -449,6 +450,7 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
         .or(just('!').map(|_| UnaryOp::Not))
         .or(just("clone").map(|_| UnaryOp::Clone))
         .or(just("mirror").map(|_| UnaryOp::Mirror))
+        .or(just("ref").map(|_| UnaryOp::Ref))
         .map_with_region(|op, region| Node::new(op, region))
         .repeated()
         .then(access)

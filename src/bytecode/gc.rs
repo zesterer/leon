@@ -15,7 +15,9 @@ pub struct Tracer<'a, T: Trace> {
 
 impl<'a, T: Trace> Tracer<'a, T> {
     pub fn mark(&mut self, handle: Handle<T>) {
-        let sweep = self.item_sweeps.get_mut(&handle.ptr).unwrap();
+        let sweep = self.item_sweeps
+            .entry(handle.ptr)
+            .or_insert(self.new_sweep);
         if *sweep != self.new_sweep {
             *sweep = self.new_sweep;
             unsafe { &*handle.ptr }.trace(self);
@@ -47,7 +49,6 @@ impl<T: Trace> Heap<T> {
     pub fn insert_temp(&mut self, item: T) -> Handle<T> {
         let ptr = Box::into_raw(Box::new(item));
 
-        self.item_sweeps.insert(ptr, self.last_sweep);
         self.items.insert(ptr);
 
         Handle { ptr }
@@ -66,6 +67,7 @@ impl<T: Trace> Heap<T> {
         }
     }
 
+    /// Turn the given handle into a rooted handle.
     pub fn make_rooted(&mut self, handle: impl AsRef<Handle<T>>) -> Rooted<T> {
         let handle = handle.as_ref();
         debug_assert!(self.contains(handle));
@@ -75,14 +77,16 @@ impl<T: Trace> Heap<T> {
                 .entry(handle.ptr)
                 .or_insert_with(|| Rc::new(()))
                 .clone(),
-            handle,
+            handle: *handle,
         }
     }
 
+    /// Get the number of heap-allocated items
     pub fn len(&self) -> usize {
         self.items.len()
     }
 
+    /// Return true if the heap contains the specified handle
     pub fn contains(&self, handle: impl AsRef<Handle<T>>) -> bool {
         let handle = handle.as_ref();
         self.items.contains(&handle.ptr)
@@ -102,7 +106,7 @@ impl<T: Trace> Heap<T> {
     pub unsafe fn get_unchecked(&self, handle: impl AsRef<Handle<T>>) -> &T {
         let handle = handle.as_ref();
         debug_assert!(self.contains(handle));
-        unsafe { &*handle.ptr }
+        &*handle.ptr
     }
 
     // Because it's impossible to mutably (or immutably) access this `GcHeap` from within the
@@ -121,9 +125,10 @@ impl<T: Trace> Heap<T> {
     pub unsafe fn mutate_unchecked<R, F: FnOnce(&mut T) -> R>(&mut self, handle: impl AsRef<Handle<T>>, f: F) -> R {
         let handle = handle.as_ref();
         debug_assert!(self.contains(handle));
-        f(unsafe { &mut *handle.ptr })
+        f(&mut *handle.ptr)
     }
 
+    /// Clean orphaned items from the heap
     pub fn clean(&mut self) {
         let new_sweep = self.last_sweep + 1;
         let mut tracer = Tracer {
@@ -145,13 +150,17 @@ impl<T: Trace> Heap<T> {
             });
 
         // Sweep
-        let items = &mut self.items;
-        self.item_sweeps
-            .retain(|ptr, sweep| {
-                if *sweep == new_sweep {
+        let item_sweeps = &mut self.item_sweeps;
+        self.items
+            .retain(|ptr| {
+                if item_sweeps
+                    .get(ptr)
+                    .map(|sweep| *sweep == new_sweep)
+                    .unwrap_or(false)
+                {
                     true
                 } else {
-                    items.remove(ptr);
+                    item_sweeps.remove(ptr);
                     drop(unsafe { Box::from_raw(*ptr) });
                     false
                 }
@@ -187,10 +196,25 @@ impl<T> AsRef<Handle<T>> for Handle<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+impl<T> From<Rooted<T>> for Handle<T> {
+    fn from(rooted: Rooted<T>) -> Self {
+        rooted.handle
+    }
+}
+
+#[derive(Debug)]
 pub struct Rooted<T> {
     rc: Rc<()>,
     handle: Handle<T>,
+}
+
+impl<T> Clone for Rooted<T> {
+    fn clone(&self) -> Self {
+        Self {
+            rc: self.rc.clone(),
+            handle: self.handle,
+        }
+    }
 }
 
 impl<T> AsRef<Handle<T>> for Rooted<T> {
@@ -298,6 +322,25 @@ mod tests {
         heap.clean();
 
         assert_eq!(heap.contains(&a), false);
+        assert_eq!(heap.contains(&b), true);
+    }
+
+    #[test]
+    fn temporary() {
+        let mut heap = Heap::default();
+
+        let a = heap.insert_temp(Value::Base);
+
+        heap.clean();
+
+        assert_eq!(heap.contains(&a), false);
+
+        let a = heap.insert_temp(Value::Base);
+        let b = heap.insert(Value::Refs(a, a));
+
+        heap.clean();
+
+        assert_eq!(heap.contains(&a), true);
         assert_eq!(heap.contains(&b), true);
     }
 }

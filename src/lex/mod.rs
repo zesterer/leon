@@ -67,6 +67,7 @@ pub enum Lexeme {
     Xor,
     Clone,
     Mirror,
+    Ref,
 
     Char,
     Num,
@@ -154,6 +155,7 @@ impl Lexeme {
             Lexeme::Xor => "xor",
             Lexeme::Clone => "clone",
             Lexeme::Mirror => "mirror",
+            Lexeme::Ref => "ref",
 
             Lexeme::Char => "char",
             Lexeme::Num => "num",
@@ -420,6 +422,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                         "xor" => Lexeme::Xor,
                         "clone" => Lexeme::Clone,
                         "mirror" => Lexeme::Mirror,
+                        "ref" => Lexeme::Ref,
                         "char" => Lexeme::Char,
                         "num" => Lexeme::Num,
                         "str" => Lexeme::Str,
