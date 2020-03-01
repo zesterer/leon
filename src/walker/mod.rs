@@ -52,8 +52,8 @@ pub enum Value<'a> {
     Null,
     Func(&'a Node<Vec<Node<Interned<String>>>>, &'a Node<Expr>),
     Structure(HashMap<Interned<String>, Self>),
-    Ref(Rc<RefCell<Self>>),
     List(Vec<Self>),
+    Ref(Rc<RefCell<Self>>),
     Custom(Box<dyn Object>),
 }
 
@@ -66,8 +66,8 @@ impl<'a> Clone for Value<'a> {
             Value::Null => Value::Null,
             Value::Func(a, b) => Value::Func(a, b),
             Value::Structure(v) => Value::Structure(v.clone()),
-            Value::Ref(v) => Value::Ref(v.clone()),
             Value::List(v) => Value::List(v.clone()),
+            Value::Ref(v) => Value::Ref(v.clone()),
             Value::Custom(v) => Value::Custom(v.cloned()),
         }
     }
@@ -86,8 +86,8 @@ impl<'a> fmt::Debug for Value<'a> {
                 .map(|(name, val)| format!("{:?}: {:?}", name, val))
                 .collect::<Vec<_>>()
                 .join(", ")),
-            Value::Ref(val) => write!(f, "ref {:?}", *val.borrow()),
             Value::List(items) => write!(f, "{:?}", items),
+            Value::Ref(val) => write!(f, "ref {:?}", *val.borrow()),
             Value::Custom(custom) => custom.fmt(f),
         }
     }
@@ -111,11 +111,11 @@ impl<'a> Value<'a> {
                 .into_iter()
                 .map(|(i, x)| (i, x.into_static()))
                 .collect()),
-            Value::Ref(x) => Value::Ref(Rc::new(RefCell::new(x.borrow().clone().into_static()))),
             Value::List(items) => Value::List(items
                 .into_iter()
                 .map(Self::into_static)
                 .collect()),
+            Value::Ref(x) => Value::Ref(Rc::new(RefCell::new(x.borrow().clone().into_static()))),
             Value::Custom(x) => Value::Custom(x),
         }
     }
@@ -358,6 +358,7 @@ impl<'a> Value<'a> {
         }
     }
 
+    /*
     fn field_and_receiver(&self, field: Interned<String>, special: &SpecialIdents) -> Result<(Option<Self>, Self), ExecError> {
         match self {
             Value::List(items) if field == special.len => Ok((None, Value::Number(items.len() as f64))),
@@ -367,6 +368,19 @@ impl<'a> Value<'a> {
                 .ok_or(ExecError::NoSuchField)?)),
             Value::Ref(val) => Ok((Some(self.clone()), val.borrow().field_and_receiver(field, special)?.1)),
             val => Err(ExecError::NotAStructure),
+        }
+    }
+    */
+
+    fn field(&self, field: Interned<String>, special: &SpecialIdents) -> Result<Self, ExecError> {
+        match self {
+            Value::List(items) if field == special.len => Ok(Value::Number(items.len() as f64)),
+            Value::Structure(fields) => fields
+                .get(&field)
+                .cloned()
+                .ok_or(ExecError::NoSuchField),
+            Value::Ref(val) => val.borrow().field(field, special),
+            val => Err(ExecError::NoSuchField),
         }
     }
 
@@ -432,7 +446,7 @@ impl<'a> AbstractMachine<'a> {
                 self.value_mut_with(expr, Box::new(|val| val.field_mutate(&*field, f)))
             },
             Expr::Index(expr, index) => {
-                let index = self.exec(index)?.1;
+                let index = self.exec(index)?;
                 self.value_mut_with(expr, Box::new(|val| val.index_mutate(index, f)))
             },
             _ => Err(ExecError::NotAnLValue)
@@ -451,8 +465,8 @@ impl<'a> AbstractMachine<'a> {
         Ok(())
     }
 
-    fn exec(&mut self, expr: &'a Node<Expr>) -> Result<(Option<Value<'a>>, Value<'a>), ExecError> {
-        let val = match &**expr {
+    fn exec(&mut self, expr: &'a Node<Expr>) -> Result<Value<'a>, ExecError> {
+        Ok(match &**expr {
             Expr::Literal(l) => Value::from_literal(&l, &self),
             Expr::Ident(i) => self.stack
                 .iter()
@@ -466,35 +480,36 @@ impl<'a> AbstractMachine<'a> {
             Expr::Structure(fields) => {
                 let fields = fields
                     .iter()
-                    .map(|(ident, expr)| Ok((**ident, self.exec(expr)?.1)))
+                    .map(|(ident, expr)| Ok((**ident, self.exec(expr)?)))
                     .collect::<Result<_, ExecError>>()?;
                 Value::Structure(fields).into_ref()?
             },
             Expr::List(items) => {
                 let items = items
                     .iter()
-                    .map(|item| Ok(self.exec(item)?.1))
+                    .map(|item| Ok(self.exec(item)?))
                     .collect::<Result<_, ExecError>>()?;
                 Value::List(items)
             },
             Expr::ListMany(item, count) => {
-                let count = self.exec(count)?.1;
-                let item = self.exec(item)?.1;
+                let count = self.exec(count)?;
+                let item = self.exec(item)?;
                 match count {
                     Value::Number(x) => Value::List(vec![item; x as usize]),
                     _ => return Err(ExecError::InvalidLength),
                 }
             },
             Expr::Unary(op, a) => {
-                let a = self.exec(&a)?.1;
+                let a = self.exec(&a)?;
                 match &**op {
                     UnaryOp::Not => a.apply_not(),
                     UnaryOp::Neg => a.apply_neg(),
+                    op => todo!("Implement {:?}", op),
                 }?
             },
             Expr::Binary(op, a, b) => {
-                let a = self.exec(&a)?.1;
-                let b = self.exec(&b)?.1;
+                let a = self.exec(&a)?;
+                let b = self.exec(&b)?;
                 match &**op {
                     BinaryOp::Add => a.apply_add(b),
                     BinaryOp::Sub => a.apply_sub(b),
@@ -512,34 +527,34 @@ impl<'a> AbstractMachine<'a> {
                 }?
             },
             Expr::Var(ident, expr, tail) => {
-                let val = self.exec(&expr)?.1;
+                let val = self.exec(&expr)?;
                 self.stack.push(Some((**ident, val)));
-                let val = self.exec(&tail)?.1;
+                let val = self.exec(&tail)?;
                 self.stack.pop();
                 val
             },
             Expr::ThisThen(head, tail) => {
                 self.exec(&head)?;
-                self.exec(&tail)?.1
+                self.exec(&tail)?
             },
             Expr::Mutation(m, lvalue, rhs) => {
-                let rhs = self.exec(&rhs)?.1;
+                let rhs = self.exec(&rhs)?;
                 self.mutate(&lvalue, &**m, rhs)?;
                 Value::Null
             },
-            Expr::IfElse(predicate, a, b) => if self.exec(&predicate)?.1.truth()? {
-                self.exec(&a)?.1
+            Expr::IfElse(predicate, a, b) => if self.exec(&predicate)?.truth()? {
+                self.exec(&a)?
             } else {
-                self.exec(&b)?.1
+                self.exec(&b)?
             },
             Expr::While(predicate, body) => {
-                while self.exec(&predicate)?.1.truth()? {
+                while self.exec(&predicate)?.truth()? {
                     self.exec(&body)?;
                 }
                 Value::Null
             },
             Expr::Call(func, args) => {
-                let (receiver, func) = self.exec(&func)?;
+                let func = self.exec(&func)?;
 
                 if let Value::Func(params, body) = func {
                     if params.len() == args.len() {
@@ -548,11 +563,11 @@ impl<'a> AbstractMachine<'a> {
                             .map(|arg| self.exec(arg))
                             .collect::<Result<Vec<_>, _>>()?;
                         self.stack.push(None);
-                        self.stack.push(Some((self.special._self, receiver.unwrap_or(Value::Null))));
+
                         for (i, arg) in params.iter().zip(args.into_iter()) {
-                            self.stack.push(Some((**i, arg.1)));
+                            self.stack.push(Some((**i, arg)));
                         }
-                        let val = self.exec(&body)?.1;
+                        let val = self.exec(&body)?;
                         for _ in 0..params.len() {
                             self.stack.pop();
                         }
@@ -566,28 +581,62 @@ impl<'a> AbstractMachine<'a> {
                     return Err(ExecError::NotCallable);
                 }
             },
+            Expr::CallMethod(receiver, field, args) => {
+                let receiver = self.exec(&receiver)?;
+
+                let args = args
+                    .iter()
+                    .map(|arg| self.exec(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                if let Value::Custom(x) = receiver {
+                    x.call_method(&self.idents.get(**field), &args)?
+                } else {
+                    let func = receiver.field(**field, &self.special)?;
+
+                    if let Value::Func(params, body) = func {
+                        if params.len() == args.len() {
+                            self.stack.push(None);
+
+                            self.stack.push(Some((self.special._self, receiver)));
+
+                            for (i, arg) in params.iter().zip(args.into_iter()) {
+                                self.stack.push(Some((**i, arg)));
+                            }
+                            let val = self.exec(&body)?;
+                            for _ in 0..params.len() {
+                                self.stack.pop();
+                            }
+                            self.stack.pop();
+                            self.stack.pop();
+                            val
+                        } else {
+                            return Err(ExecError::WrongNumberOfArgs);
+                        }
+                    } else {
+                        return Err(ExecError::NotCallable);
+                    }
+                }
+            },
             Expr::Index(expr, index) => {
-                let expr = self.exec(&expr)?.1;
-                let index = self.exec(&index)?.1;
+                let expr = self.exec(&expr)?;
+                let index = self.exec(&index)?;
                 expr.apply_index(index)?
             },
             Expr::Convert(expr, ty) => {
-                let expr = self.exec(&expr)?.1;
+                let expr = self.exec(&expr)?;
                 expr.convert(&*ty)?
             },
             Expr::Field(expr, field) => {
-                let expr = self.exec(&expr)?.1;
-                return expr.field_and_receiver(**field, &self.special).map(|x| x.clone())
+                self.exec(&expr)?.field(**field, &self.special)?
             },
             expr => {
                 unimplemented!("{:?}", expr)
             },
-        };
-
-        Ok((None, val))
+        })
     }
 
     pub fn execute(mut self, expr: &'a Node<Expr>) -> Result<Value<'static>, ExecError> {
-        Ok(self.exec(expr)?.1.into_static())
+        Ok(self.exec(expr)?.into_static())
     }
 }

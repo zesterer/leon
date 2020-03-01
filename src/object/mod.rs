@@ -27,6 +27,7 @@ pub trait Object: std::fmt::Debug + ObjectHelper + 'static {
     fn as_any(&self) -> &dyn Any { self.as_any_impl() }
     fn cloned(&self) -> Box<dyn Object> { self.cloned_impl() }
     fn call<'a>(&self, args: &[Value<'a>]) -> Result<Value<'a>, InvalidOperation> { Err("Not callable!".into()) }
+    fn call_method<'a>(&self, method: &str, args: &[Value<'a>]) -> Result<Value<'a>, InvalidOperation> { Err("Not callable!".into()) }
     fn truth(&self) -> Result<bool, InvalidOperation> { Err("Not truthable!".into()) }
     fn not<'a>(&self) -> Result<Value<'a>, InvalidOperation> { Err("Not notable!".into()) }
     fn neg<'a>(&self) -> Result<Value<'a>, InvalidOperation> { Err("Not negativeable!".into()) }

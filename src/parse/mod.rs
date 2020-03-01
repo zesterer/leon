@@ -60,12 +60,17 @@ impl Literal {
 }
 
 #[derive(Debug)]
+#[repr(u8)]
 pub enum UnaryOp {
     Neg,
     Not,
+
+    Clone,
+    Mirror,
 }
 
 #[derive(Debug)]
+#[repr(u8)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -90,6 +95,7 @@ pub enum BinaryOp {
 }
 
 #[derive(Debug)]
+#[repr(u8)]
 pub enum Mutation {
     Assign,
     AddAssign,
@@ -130,6 +136,7 @@ pub enum Expr {
     Mutation(Node<Mutation>, Node<Expr>, Node<Expr>),
     Func(Node<Vec<Node<Interned<String>>>>, Node<Expr>),
     Call(Node<Expr>, Node<Vec<Node<Expr>>>),
+    CallMethod(Node<Expr>, Node<Interned<String>>, Node<Vec<Node<Expr>>>),
     Index(Node<Expr>, Node<Expr>),
     Field(Node<Expr>, Node<Interned<String>>),
     Structure(Node<Vec<(Node<Interned<String>>, Node<Expr>)>>),
@@ -398,6 +405,7 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
         .boxed();
 
     let access = atom
+        // Call
         .then(just('(')
             .padding_for(list.clone())
             .padded_by(just(')'))
@@ -405,6 +413,7 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
                 let region = expr.region.union(list.region);
                 Expr::Call(expr, list).at(region)
             }) as Box<dyn FnOnce(_) -> _>)
+            // Index
             .or(just('[')
                 .padding_for(list.clone())
                 .padded_by(just(']'))
@@ -415,6 +424,17 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
                         let region = index.region;
                         Expr::Index(expr, index).at(region)
                     })) as Box<dyn FnOnce(_) -> _>))
+            // Method call
+            .or(just('.')
+                .padding_for(ident.clone().map_with_region(|ident, region| Node::new(ident, region)))
+                .padded_by(just('('))
+                .then(list.clone())
+                .padded_by(just(')'))
+                .map(|(field, args)| Box::new(|expr: Node<Expr>| {
+                    let region = expr.region.union(field.region);
+                    Expr::CallMethod(expr, field, args).at(region)
+                }) as Box<dyn FnOnce(_) -> _>))
+            // Field access
             .or(just('.')
                 .padding_for(ident.clone().map_with_region(|ident, region| Node::new(ident, region)))
                 .map(|field| Box::new(|expr: Node<Expr>| {
@@ -427,6 +447,8 @@ pub fn parse(tokens: &[Token]) -> Result<Node<Expr>, Vec<Error>> {
 
     let unary = just('-').map(|_| UnaryOp::Neg)
         .or(just('!').map(|_| UnaryOp::Not))
+        .or(just("clone").map(|_| UnaryOp::Clone))
+        .or(just("mirror").map(|_| UnaryOp::Mirror))
         .map_with_region(|op, region| Node::new(op, region))
         .repeated()
         .then(access)

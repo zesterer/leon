@@ -65,6 +65,8 @@ pub enum Lexeme {
     And,
     Or,
     Xor,
+    Clone,
+    Mirror,
 
     Char,
     Num,
@@ -150,6 +152,8 @@ impl Lexeme {
             Lexeme::And => "and",
             Lexeme::Or => "or",
             Lexeme::Xor => "xor",
+            Lexeme::Clone => "clone",
+            Lexeme::Mirror => "mirror",
 
             Lexeme::Char => "char",
             Lexeme::Num => "num",
@@ -414,6 +418,8 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                         "and" => Lexeme::And,
                         "or" => Lexeme::Or,
                         "xor" => Lexeme::Xor,
+                        "clone" => Lexeme::Clone,
+                        "mirror" => Lexeme::Mirror,
                         "char" => Lexeme::Char,
                         "num" => Lexeme::Num,
                         "str" => Lexeme::Str,

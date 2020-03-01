@@ -27,7 +27,7 @@ pub struct Heap<T> {
     last_sweep: usize,
     item_sweeps: HashMap<*mut T, usize>,
     items: HashSet<*mut T>,
-    rooted: HashSet<(Rc<()>, *mut T)>,
+    rooted: HashMap<*mut T, Rc<()>>,
 }
 
 impl<T> Default for Heap<T> {
@@ -36,7 +36,7 @@ impl<T> Default for Heap<T> {
             last_sweep: 0,
             item_sweeps: HashMap::default(),
             items: HashSet::default(),
-            rooted: HashSet::default(),
+            rooted: HashMap::default(),
         }
     }
 }
@@ -58,10 +58,23 @@ impl<T: Trace> Heap<T> {
         let handle = self.insert_temp(item);
 
         let rc = Rc::new(());
-        self.rooted.insert((rc.clone(), handle.ptr));
+        self.rooted.insert(handle.ptr, rc.clone());
 
         Rooted {
             rc,
+            handle,
+        }
+    }
+
+    pub fn make_rooted(&mut self, handle: impl AsRef<Handle<T>>) -> Rooted<T> {
+        let handle = handle.as_ref();
+        debug_assert!(self.contains(handle));
+
+        Rooted {
+            rc: self.rooted
+                .entry(handle.ptr)
+                .or_insert_with(|| Rc::new(()))
+                .clone(),
             handle,
         }
     }
@@ -86,7 +99,7 @@ impl<T: Trace> Heap<T> {
     }
 
     // Undefined behaviour occurs when the handle does not originating in this heap.
-    pub fn get_unchecked(&self, handle: impl AsRef<Handle<T>>) -> &T {
+    pub unsafe fn get_unchecked(&self, handle: impl AsRef<Handle<T>>) -> &T {
         let handle = handle.as_ref();
         debug_assert!(self.contains(handle));
         unsafe { &*handle.ptr }
@@ -105,7 +118,7 @@ impl<T: Trace> Heap<T> {
     }
 
     // Undefined behaviour occurs when the handle does not originating in this heap.
-    pub fn mutate_unchecked<R, F: FnOnce(&mut T) -> R>(&mut self, handle: impl AsRef<Handle<T>>, f: F) -> R {
+    pub unsafe fn mutate_unchecked<R, F: FnOnce(&mut T) -> R>(&mut self, handle: impl AsRef<Handle<T>>, f: F) -> R {
         let handle = handle.as_ref();
         debug_assert!(self.contains(handle));
         f(unsafe { &mut *handle.ptr })
@@ -121,7 +134,7 @@ impl<T: Trace> Heap<T> {
 
         // Mark
         self.rooted
-            .retain(|(rc, ptr)| {
+            .retain(|ptr, rc| {
                 if Rc::strong_count(rc) > 1 {
                     tracer.mark(Handle { ptr: *ptr });
                     unsafe { &**ptr }.trace(&mut tracer);
@@ -156,6 +169,7 @@ impl<T> Drop for Heap<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct Handle<T> {
     ptr: *mut T,
 }
@@ -173,7 +187,7 @@ impl<T> AsRef<Handle<T>> for Handle<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Rooted<T> {
     rc: Rc<()>,
     handle: Handle<T>,
@@ -250,6 +264,19 @@ mod tests {
         assert_eq!(heap.contains(&c), true);
         assert_eq!(heap.contains(&d), true);
         assert_eq!(heap.contains(&e), false);
+
+        let a = heap.insert_temp(Value::Base);
+
+        heap.clean();
+
+        assert_eq!(heap.contains(&a), false);
+
+        let a = heap.insert_temp(Value::Base);
+        let a = heap.make_rooted(a);
+
+        heap.clean();
+
+        assert_eq!(heap.contains(&a), true);
     }
 
     #[test]

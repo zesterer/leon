@@ -1,5 +1,5 @@
 const SCRIPT: &str = "
-    var test = myvec + 4 + myvec;
+    var test = myvec + 4 + myvec.sum();
     test
 ";
 
@@ -41,6 +41,7 @@ impl std::ops::Add<f32> for MyVec3 {
         }
     }
 }
+
 impl Object for MyVec3 {
     fn add<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> {
         match rhs {
@@ -50,6 +51,14 @@ impl Object for MyVec3 {
 
             Value::Number(num) => Ok(Value::Custom(Box::new(*self + *num as f32))),
             _ => Err(InvalidOperation("Cannot add with prodvided Value variant".into()))
+        }
+    }
+
+    fn call_method<'a>(&self, method: &str, args: &[Value<'a>]) -> Result<Value<'a>, InvalidOperation> {
+        match method {
+            "sum" => Ok(Value::Number((self.x + self.y + self.z) as f64)),
+            _ => Err(InvalidOperation(format!("Cannot call method {}", method)))
+
         }
     }
 }
