@@ -1,6 +1,3 @@
-mod heap;
-mod value;
-
 use std::{
     fmt,
     rc::Rc,
