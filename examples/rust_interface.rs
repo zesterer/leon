@@ -1,5 +1,5 @@
 const SCRIPT: &str = "
-    var test = myvec + 4;
+    var test = myvec + 4 + myvec;
     test
 ";
 
@@ -44,12 +44,12 @@ impl std::ops::Add<f32> for MyVec3 {
 impl Object for MyVec3 {
     fn add<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> {
         match rhs {
-            /*Value::Custom(obj) => obj.downcast::<Self>()
-                .map(|v| Box::new(*self + *v))
-                .map_err(|_| InvalidOperation("Cannot add with provided type".into())),*/
+            Value::Custom(obj) => obj.as_any().downcast_ref::<Self>().cloned()
+                .map(|v| Value::Custom(Box::new(*self + v)))
+                .ok_or_else(|| InvalidOperation("Cannot add with provided type".into())),
 
             Value::Number(num) => Ok(Value::Custom(Box::new(*self + *num as f32))),
-            _ => Err(InvalidOperation("Cannot add with prodived Value variant".into()))
+            _ => Err(InvalidOperation("Cannot add with prodvided Value variant".into()))
         }
     }
 }

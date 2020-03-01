@@ -30,7 +30,6 @@ pub trait Object: std::fmt::Debug + ObjectHelper + 'static {
     fn truth(&self) -> Result<bool, InvalidOperation> { Err("Not truthable!".into()) }
     fn not<'a>(&self) -> Result<Value<'a>, InvalidOperation> { Err("Not notable!".into()) }
     fn neg<'a>(&self) -> Result<Value<'a>, InvalidOperation> { Err("Not negativeable!".into()) }
-    // Use &Value ??
     fn add<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not addable!".into()) }
     fn sub<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not subable!".into()) }
     fn add_assign<'a>(&mut self, rhs: &Value<'a>) -> Result<(), InvalidOperation> { Err("Not add assignable!".into()) }
