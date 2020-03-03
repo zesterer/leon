@@ -1,6 +1,6 @@
 use internment::LocalIntern;
 use crate::{
-    util::{Interned, InternTable, SrcLoc, SrcRegion},
+    util::{SrcLoc, SrcRegion},
     Error, Thing,
 };
 
@@ -8,8 +8,8 @@ use crate::{
 pub enum Lexeme {
     Eof,
 
-    Ident(Interned<String>),
-    String(Interned<String>),
+    Ident(LocalIntern<String>),
+    String(LocalIntern<String>),
     Number(LocalIntern<String>),
 
     LBrace,
@@ -91,13 +91,13 @@ impl<'a> PartialEq<&'a str> for Lexeme {
 }
 
 impl Lexeme {
-    pub fn as_str<'a>(&self) -> &'a str {
+    pub fn as_str(&self) -> &str {
         match self {
             Lexeme::Eof => "EOF",
 
-            Lexeme::Ident(i) => "<identifier>",
-            Lexeme::String(i) => "<string>",
-            Lexeme::Number(i) => "<number>",
+            Lexeme::Ident(i) => i.as_str(),
+            Lexeme::String(i) => i.as_str(),
+            Lexeme::Number(i) => i.as_str(),
 
             Lexeme::LBrace => "{",
             Lexeme::RBrace => "}",
@@ -166,15 +166,6 @@ impl Lexeme {
             Lexeme::Null => "null",
         }
     }
-
-    pub fn as_str_ctx<'a>(&'a self, ctx: &'a TokenCtx) -> &'a str {
-        match self {
-            Lexeme::Ident(i) => ctx.idents.get(*i),
-            Lexeme::String(i) => ctx.strings.get(*i),
-            Lexeme::Number(x) => x.as_str(),
-            _ => self.as_str(),
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -209,27 +200,12 @@ impl Token {
         }
     }
 
-    pub fn print_debug(&self, ctx: &TokenCtx) {
-        println!("{:?}: '{}'", self.region, self.lexeme.as_str_ctx(ctx))
+    pub fn print_debug(&self) {
+        println!("{:?}: '{}'", self.region, self.lexeme.as_str())
     }
 }
 
-#[derive(PartialEq, Debug)]
-pub struct TokenCtx {
-    pub idents: InternTable<String>,
-    pub strings: InternTable<String>,
-    pub numbers: InternTable<String>,
-}
-
-impl TokenCtx {
-    pub fn print_debug(&self, tokens: &[Token]) {
-        for token in tokens {
-            token.print_debug(self);
-        }
-    }
-}
-
-pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
+pub fn lex(s: &str) -> Result<Vec<Token>, Vec<Error>> {
     fn is_singular(c: char) -> Option<Lexeme> {
         Some(match c {
             '.' => Lexeme::Dot,
@@ -347,9 +323,6 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
 
     let mut tokens = Vec::new();
     let mut errors = Vec::new();
-    let mut idents = InternTable::default();
-    let mut strings = InternTable::default();
-    let mut numbers = InternTable::default();
 
     enum State {
         Default,
@@ -392,7 +365,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
             },
             State::String(start, string) => match c {
                 Some('"') => {
-                    tokens.push(Token::new(Lexeme::String(strings.intern(string.clone())), SrcRegion::range(*start, loc.next())));
+                    tokens.push(Token::new(Lexeme::String(LocalIntern::new(string.clone())), SrcRegion::range(*start, loc.next())));
                     state = State::Default;
                 },
                 Some(c) => string.push(c),
@@ -429,7 +402,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
                         "true" => Lexeme::True,
                         "false" => Lexeme::False,
                         "null" => Lexeme::Null,
-                        _ => Lexeme::Ident(idents.intern(ident.clone())),
+                        _ => Lexeme::Ident(LocalIntern::new(ident.clone())),
                     };
                     tokens.push(Token::new(lexeme, SrcRegion::range(*start, loc.next())));
                     to_next = false;
@@ -482,11 +455,7 @@ pub fn lex(s: &str) -> Result<(Vec<Token>, TokenCtx), Vec<Error>> {
     }
 
     if errors.len() == 0 {
-        Ok((tokens, TokenCtx {
-            idents,
-            strings,
-            numbers,
-        }))
+        Ok(tokens)
     } else {
         Err(errors)
     }
@@ -500,13 +469,10 @@ fn test_lex() {
     assert_eq!(
         lex("println(\"Hello, world!\")"),
         Ok({
-            let mut idents = InternTable::default();
-            let mut strings = InternTable::default();
-
             let tokens = vec![
                 // println
                 Token {
-                    lexeme: Lexeme::Ident(idents.intern("println".to_owned())),
+                    lexeme: Lexeme::Ident(LocalIntern::new("println".to_owned())),
                     region: SrcRegion::range(SrcLoc(0), SrcLoc(8)),
                 },
                 // (
@@ -516,7 +482,7 @@ fn test_lex() {
                 },
                 // "Hello, world!"
                 Token {
-                    lexeme: Lexeme::String(strings.intern("Hello, world!".to_owned())),
+                    lexeme: Lexeme::String(LocalIntern::new("Hello, world!".to_owned())),
                     region: SrcRegion::range(SrcLoc(8), SrcLoc(23)),
                 },
                 // )
@@ -526,11 +492,7 @@ fn test_lex() {
                 },
             ];
 
-            (tokens, TokenCtx {
-                idents,
-                strings,
-                numbers: InternTable::default(),
-            })
+            tokens
         }),
     );
 }

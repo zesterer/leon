@@ -4,7 +4,6 @@ use std::{
     cell::RefCell,
     collections::HashMap,
 };
-use lazy_static::lazy_static;
 use crate::{
     parse::{
         Node,
@@ -15,9 +14,9 @@ use crate::{
         BinaryOp,
         Mutation,
     },
-    util::{Interned, InternTable, SrcRegion},
     object::{self, Object},
 };
+use internment::LocalIntern;
 
 #[derive(Clone, Debug)]
 pub enum ExecError {
@@ -47,8 +46,8 @@ pub enum Value<'a> {
     Number(f64),
     Bool(bool),
     Null,
-    Func(&'a Node<Vec<Node<Interned<String>>>>, &'a Node<Expr>),
-    Structure(HashMap<Interned<String>, Self>),
+    Func(&'a Node<Vec<Node<LocalIntern<String>>>>, &'a Node<Expr>),
+    Structure(HashMap<LocalIntern<String>, Self>),
     List(Vec<Self>),
     Ref(Rc<RefCell<Self>>),
     Custom(Box<dyn Object>),
@@ -90,33 +89,7 @@ impl<'a> fmt::Debug for Value<'a> {
     }
 }
 
-lazy_static! {
-    static ref PHONEY_PARAMS: Node<Vec<Node<Interned<String>>>> = Node::new(Vec::new(), SrcRegion::none());
-    static ref PHONEY_EXPR: Node<Expr> = Node::new(Expr::Literal(Literal::Null), SrcRegion::none());
-}
-
 impl<'a> Value<'a> {
-    // TODO: Get rid of this
-    pub(crate) fn into_static(self) -> Value<'static> {
-        match self {
-            Value::String(x) => Value::String(x),
-            Value::Number(x) => Value::Number(x),
-            Value::Bool(x) => Value::Bool(x),
-            Value::Null => Value::Null,
-            Value::Func(_, _) => Value::Func(&PHONEY_PARAMS, &PHONEY_EXPR),
-            Value::Structure(fields) => Value::Structure(fields
-                .into_iter()
-                .map(|(i, x)| (i, x.into_static()))
-                .collect()),
-            Value::List(items) => Value::List(items
-                .into_iter()
-                .map(Self::into_static)
-                .collect()),
-            Value::Ref(x) => Value::Ref(Rc::new(RefCell::new(x.borrow().clone().into_static()))),
-            Value::Custom(x) => Value::Custom(x),
-        }
-    }
-
     pub fn extract<T: Object + Clone>(self) -> Option<T> {
         match self {
             Self::Custom(x) => x.as_any().downcast_ref().cloned(),
@@ -126,7 +99,7 @@ impl<'a> Value<'a> {
 
     fn from_literal(l: &Literal, machine: &AbstractMachine<'a>) -> Self {
         match l {
-            Literal::String(i) => Value::String(machine.strings.get(*i).clone()),
+            Literal::String(i) => Value::String(i.as_ref().clone()),
             Literal::Number(x) => Value::Number(*x),
             Literal::Bool(x) => Value::Bool(*x),
             Literal::Null => Value::Null,
@@ -316,8 +289,8 @@ impl<'a> Value<'a> {
         }
     }
 
-    fn apply_index(self, rhs: Self) -> Result<Self, ExecError> {
-        match (self, rhs) {
+    fn apply_index(self, index: Self) -> Result<Self, ExecError> {
+        match (self, index) {
             (Value::String(a), Value::Number(b)) => Ok(Value::String(a
                 .get(b as usize..b as usize + 1)
                 .ok_or(ExecError::OutOfRange)?
@@ -332,17 +305,26 @@ impl<'a> Value<'a> {
         }
     }
 
-    fn field_mutate(&mut self, field: &Interned<String>, f: impl FnOnce(&mut Self) -> Result<(), ExecError>) -> Result<(), ExecError> {
+    fn field_mutate<'b>(
+        &mut self, 
+        field: LocalIntern<String>,
+        f: Box<dyn FnOnce(&mut Self) -> Result<(), ExecError> + 'b>,
+    ) -> Result<(), ExecError> {
         match self {
             Value::Structure(fields) => f(fields
-                .get_mut(field)
+                .get_mut(&field)
                 .ok_or(ExecError::NoSuchField)?),
             Value::Ref(val) => val.borrow_mut().field_mutate(field, f),
+            Value::Custom(o) => o.field_mutate(&field, f),
             _ => Err(ExecError::NotAStructure),
         }
     }
 
-    fn index_mutate(&mut self, index: Self, f: impl FnOnce(&mut Self) -> Result<(), ExecError>) -> Result<(), ExecError> {
+    fn index_mutate<'b>(
+        &mut self,
+        index: Self,
+        f: Box<dyn FnOnce(&mut Self) -> Result<(), ExecError> + 'b>
+    ) -> Result<(), ExecError> {
         match self {
             Value::List(items) => f(items
                 .get_mut(match index {
@@ -351,6 +333,7 @@ impl<'a> Value<'a> {
                 })
                 .ok_or(ExecError::OutOfRange)?),
             Value::Ref(val) => val.borrow_mut().index_mutate(index, f),
+            Value::Custom(o) => o.index_mutate(&index, f),
             _ => Err(ExecError::NotAStructure),
         }
     }
@@ -369,7 +352,7 @@ impl<'a> Value<'a> {
     }
     */
 
-    fn field(&self, field: Interned<String>, special: &SpecialIdents) -> Result<Self, ExecError> {
+    fn field(&self, field: LocalIntern<String>, special: &SpecialIdents) -> Result<Self, ExecError> {
         match self {
             Value::List(items) if field == special.len => Ok(Value::Number(items.len() as f64)),
             Value::Structure(fields) => fields
@@ -377,6 +360,7 @@ impl<'a> Value<'a> {
                 .cloned()
                 .ok_or(ExecError::NoSuchField),
             Value::Ref(val) => val.borrow().field(field, special),
+            Value::Custom(o) => Ok(o.field(&field)?),
             val => Err(ExecError::NoSuchField),
         }
     }
@@ -395,34 +379,30 @@ impl<'a> Value<'a> {
 }
 
 struct SpecialIdents {
-    _self: Interned<String>,
-    len: Interned<String>,
+    _self: LocalIntern<String>,
+    len: LocalIntern<String>,
 }
 
 pub struct AbstractMachine<'a> {
     special: SpecialIdents,
-    strings: InternTable<String>,
-    idents: InternTable<String>,
-    stack: Vec<Option<(Interned<String>, Value<'a>)>>,
+    stack: Vec<Option<(LocalIntern<String>, Value<'a>)>>,
 }
 
 impl<'a> AbstractMachine<'a> {
-    pub fn new(strings: InternTable<String>, mut idents: InternTable<String>) -> Self {
+    pub fn new() -> Self {
 
         Self {
             special: SpecialIdents {
-                _self: idents.intern("self".to_string()),
-                len: idents.intern("len".to_string()),
+                _self: LocalIntern::new("self".to_string()),
+                len: LocalIntern::new("len".to_string()),
             },
-            strings,
-            idents,
             stack: Vec::new(),
         }
     }
 
     pub fn with_globals(mut self, globals: Vec<(String, Box<dyn Object>)>) -> Self {
         globals.into_iter().for_each(|(ident, custom)| {
-            let ident = self.idents.intern(ident);
+            let ident = LocalIntern::new(ident);
             self.stack.push(Some((ident, Value::Custom(custom))))
         });
 
@@ -438,9 +418,9 @@ impl<'a> AbstractMachine<'a> {
                 .filter_map(|x| x.as_mut())
                 .find(|(ident, _)| ident == i)
                 .map(|(_, v)| v)
-                .ok_or(ExecError::NoSuchVar(self.idents.get(*i).clone()))?),
+                .ok_or(ExecError::NoSuchVar(i.as_ref().clone()))?),
             Expr::Field(expr, field) => {
-                self.value_mut_with(expr, Box::new(|val| val.field_mutate(&*field, f)))
+                self.value_mut_with(expr, Box::new(|val| val.field_mutate(**field, f)))
             },
             Expr::Index(expr, index) => {
                 let index = self.exec(index)?;
@@ -462,7 +442,7 @@ impl<'a> AbstractMachine<'a> {
         Ok(())
     }
 
-    fn exec(&mut self, expr: &'a Node<Expr>) -> Result<Value<'a>, ExecError> {
+    pub fn exec(&mut self, expr: &'a Node<Expr>) -> Result<Value<'a>, ExecError> {
         Ok(match &**expr {
             Expr::Literal(l) => Value::from_literal(&l, &self),
             Expr::Ident(i) => self.stack
@@ -472,7 +452,7 @@ impl<'a> AbstractMachine<'a> {
                 .filter_map(|x| x.as_ref())
                 .find(|(ident, _)| ident == i)
                 .map(|(_, v)| v.clone())
-                .ok_or(ExecError::NoSuchVar(self.idents.get(*i).clone()))?,
+                .ok_or(ExecError::NoSuchVar(i.as_ref().clone()))?,
             Expr::Func(params, body) => Value::Func(&params, &body),
             Expr::Structure(fields) => {
                 let fields = fields
@@ -586,7 +566,7 @@ impl<'a> AbstractMachine<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
 
                 if let Value::Custom(x) = receiver {
-                    x.call_method(&self.idents.get(**field), &args)?
+                    x.call_method(field, &args)?
                 } else {
                     let func = receiver.field(**field, &self.special)?;
 
@@ -630,9 +610,5 @@ impl<'a> AbstractMachine<'a> {
                 unimplemented!("{:?}", expr)
             },
         })
-    }
-
-    pub fn execute(mut self, expr: &'a Node<Expr>) -> Result<Value<'static>, ExecError> {
-        Ok(self.exec(expr)?.into_static())
     }
 }

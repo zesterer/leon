@@ -1,5 +1,5 @@
 use std::any::Any;
-use crate::walker::Value;
+use crate::walker::{Value, ExecError};
 
 pub struct InvalidOperation(pub String);
 impl From<String> for InvalidOperation {
@@ -23,6 +23,7 @@ impl<T: Object + Clone + 'static> ObjectHelper for T {
     fn cloned_impl(&self) -> Box<dyn Object> { Box::new(self.clone()) }
 }
 
+#[allow(unused)]
 pub trait Object: std::fmt::Debug + ObjectHelper + 'static {
     fn as_any(&self) -> &dyn Any { self.as_any_impl() }
     fn cloned(&self) -> Box<dyn Object> { self.cloned_impl() }
@@ -44,7 +45,8 @@ pub trait Object: std::fmt::Debug + ObjectHelper + 'static {
     fn and<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not andable!".into()) }
     fn or<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not orable!".into()) }
     fn xor<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not xorable!".into()) }
-    fn index<'a>(&self, rhs: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not indexable!".into()) }
-    //fn mutate_field(&self, field: &Interned<String>, f: impl FnOnce(&mut Self) -> Result<(), ExecError>)
-    //field and reciever?
+    fn index<'a>(&self, index: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not indexable!".into()) }
+    fn index_mutate<'a, 'b>(&mut self, index: &Value, f: Box<dyn FnOnce(&mut Value<'a>) -> Result<(), ExecError> +'b>) -> Result<(), ExecError> { Err(InvalidOperation("Not index mutable!".into()).into()) }
+    fn field<'a>(&self, field: &str) -> Result<Value<'a>, InvalidOperation> { Err("Not fieldable!".into()) }
+    fn field_mutate<'a, 'b>(&self, field: &str, f: Box<dyn FnOnce(&mut Value<'a>) -> Result<(), ExecError> +'b>) -> Result<(), ExecError> { Err(InvalidOperation("Not field mutable!".into()).into()) }
 }

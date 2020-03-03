@@ -50,7 +50,7 @@ impl Object for MyVec3 {
                 .ok_or_else(|| InvalidOperation("Cannot add with provided type".into())),
 
             Value::Number(num) => Ok(Value::Custom(Box::new(*self + *num as f32))),
-            _ => Err(InvalidOperation("Cannot add with prodvided Value variant".into()))
+            _ => Err(InvalidOperation(format!("Cannot add with {:?}", rhs)))
         }
     }
 
@@ -67,10 +67,8 @@ fn main() {
     let vec3 = Engine::default()
         .exec(SCRIPT, vec!((
                 "myvec".into(),
-                Box::new(MyVec3::new(1.0, 1.0, 1.0))
-        )))
-        .unwrap()
-        .extract::<MyVec3>()
+                Box::new(MyVec3::new(1.0, 1.0, 1.0)),
+        )), |v| v.extract::<MyVec3>().unwrap())
         .unwrap();
 
     println!("{:?}", vec3);

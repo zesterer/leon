@@ -3,10 +3,11 @@ use std::{
 };
 use parze::prelude::*;
 use crate::{
-    lex::{Lexeme, Token, TokenCtx},
-    util::{Interned, SrcRegion},
+    lex::{Lexeme, Token},
+    util::SrcRegion,
     Error, Thing,
 };
+use internment::LocalIntern;
 
 #[derive(Debug)]
 pub struct Node<T> {
@@ -42,19 +43,19 @@ impl<T> DerefMut for Node<T> {
 
 #[derive(Debug)]
 pub enum Literal {
-    String(Interned<String>),
+    String(LocalIntern<String>),
     Number(f64),
     Bool(bool),
     Null,
 }
 
 impl Literal {
-    pub fn as_string<'a>(&self, ctx: &'a TokenCtx) -> String {
+    pub fn as_string(&self) -> String {
         match self {
-            Literal::String(i) => ctx.strings.get(*i).clone(),
+            Literal::String(i) => i.as_ref().clone(),
             Literal::Number(x) => format!("{}", x),
-            Literal::Bool(x) => if *x { "true" } else { "false" }.to_string(),
-            Literal::Null => "null".to_string(),
+            Literal::Bool(x) => if *x { "true" } else { "false" }.to_owned(),
+            Literal::Null => "null".to_owned(),
         }
     }
 }
@@ -114,7 +115,7 @@ pub enum Ty {
 }
 
 impl Ty {
-    fn print_debug_depth(&self, ctx: &TokenCtx, depth: usize) {
+    fn print_debug_depth(&self, depth: usize) {
         (0..depth * 2).for_each(|_| print!("  "));
         match self {
             Ty::Char => println!("char"),
@@ -127,20 +128,20 @@ impl Ty {
 #[derive(Debug)]
 pub enum Expr {
     Literal(Literal),
-    Ident(Interned<String>),
+    Ident(LocalIntern<String>),
     Unary(Node<UnaryOp>, Node<Expr>),
     Binary(Node<BinaryOp>, Node<Expr>, Node<Expr>),
-    Var(Node<Interned<String>>, Node<Expr>, Node<Expr>), // let foo = 5; bar
+    Var(Node<LocalIntern<String>>, Node<Expr>, Node<Expr>), // let foo = 5; bar
     ThisThen(Node<Expr>, Node<Expr>), // foo; bar
     IfElse(Node<Expr>, Node<Expr>, Node<Expr>),
     While(Node<Expr>, Node<Expr>),
     Mutation(Node<Mutation>, Node<Expr>, Node<Expr>),
-    Func(Node<Vec<Node<Interned<String>>>>, Node<Expr>),
+    Func(Node<Vec<Node<LocalIntern<String>>>>, Node<Expr>),
     Call(Node<Expr>, Node<Vec<Node<Expr>>>),
-    CallMethod(Node<Expr>, Node<Interned<String>>, Node<Vec<Node<Expr>>>),
+    CallMethod(Node<Expr>, Node<LocalIntern<String>>, Node<Vec<Node<Expr>>>),
     Index(Node<Expr>, Node<Expr>),
-    Field(Node<Expr>, Node<Interned<String>>),
-    Structure(Node<Vec<(Node<Interned<String>>, Node<Expr>)>>),
+    Field(Node<Expr>, Node<LocalIntern<String>>),
+    Structure(Node<Vec<(Node<LocalIntern<String>>, Node<Expr>)>>),
     List(Node<Vec<Node<Expr>>>),
     ListMany(Node<Expr>, Node<Expr>),
     Convert(Node<Expr>, Node<Ty>),
@@ -155,7 +156,7 @@ impl Expr {
         Node::new(Expr::Literal(literal), region)
     }
 
-    pub fn ident(ident: Interned<String>, region: SrcRegion) -> Node<Self> {
+    pub fn ident(ident: LocalIntern<String>, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::Ident(ident), region)
     }
 
@@ -175,7 +176,7 @@ impl Expr {
         Node::new(Expr::ThisThen(this, then), region)
     }
 
-    pub fn var(ident: Node<Interned<String>>, expr: Node<Expr>, then: Node<Expr>, region: SrcRegion) -> Node<Self> {
+    pub fn var(ident: Node<LocalIntern<String>>, expr: Node<Expr>, then: Node<Expr>, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::Var(ident, expr, then), region)
     }
 
@@ -187,7 +188,7 @@ impl Expr {
         Node::new(Expr::While(predicate, body), region)
     }
 
-    pub fn func(params: Node<Vec<Node<Interned<String>>>>, body: Node<Expr>, region: SrcRegion) -> Node<Self> {
+    pub fn func(params: Node<Vec<Node<LocalIntern<String>>>>, body: Node<Expr>, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::Func(params, body), region)
     }
 
@@ -199,11 +200,11 @@ impl Expr {
         Node::new(Expr::Index(expr, index), region)
     }
 
-    pub fn field(expr: Node<Expr>, field: Node<Interned<String>>, region: SrcRegion) -> Node<Self> {
+    pub fn field(expr: Node<Expr>, field: Node<LocalIntern<String>>, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::Field(expr, field), region)
     }
 
-    pub fn structure(fields: Node<Vec<(Node<Interned<String>>, Node<Expr>)>>, region: SrcRegion) -> Node<Self> {
+    pub fn structure(fields: Node<Vec<(Node<LocalIntern<String>>, Node<Expr>)>>, region: SrcRegion) -> Node<Self> {
         Node::new(Expr::Structure(fields), region)
     }
 
@@ -219,101 +220,101 @@ impl Expr {
         Node::new(Expr::Convert(expr, ty), region)
     }
 
-    fn print_debug_depth(&self, ctx: &TokenCtx, depth: usize) {
+    fn print_debug_depth(&self, depth: usize) {
         (0..depth * 2).for_each(|_| print!("  "));
         match self {
-            Expr::Literal(l) => println!("Literal: {}", l.as_string(ctx)),
-            Expr::Ident(i) => println!("Ident: {}", ctx.idents.get(*i)),
+            Expr::Literal(l) => println!("Literal: {}", l.as_string()),
+            Expr::Ident(i) => println!("Ident: {}", i),
             Expr::Unary(op, expr) => {
                 println!("Unary Operation: {:?}", **op);
-                expr.print_debug_depth(ctx, depth + 1);
+                expr.print_debug_depth(depth + 1);
             },
             Expr::Binary(op, l, r) => {
                 println!("Binary Operation: {:?}", **op);
-                l.print_debug_depth(ctx, depth + 1);
-                r.print_debug_depth(ctx, depth + 1);
+                l.print_debug_depth(depth + 1);
+                r.print_debug_depth(depth + 1);
             },
             Expr::Mutation(m, l, r) => {
                 println!("Mutation Operation: {:?}", **m);
-                l.print_debug_depth(ctx, depth + 1);
-                r.print_debug_depth(ctx, depth + 1);
+                l.print_debug_depth(depth + 1);
+                r.print_debug_depth(depth + 1);
             },
             Expr::ThisThen(this, then) => {
                 println!("This, Then:");
-                this.print_debug_depth(ctx, depth + 1);
-                then.print_debug_depth(ctx, depth);
+                this.print_debug_depth(depth + 1);
+                then.print_debug_depth(depth);
             },
             Expr::Var(ident, expr, then) => {
-                println!("Var: {}", ctx.idents.get(**ident));
-                expr.print_debug_depth(ctx, depth + 1);
-                then.print_debug_depth(ctx, depth);
+                println!("Var: {}", ident.as_ref());
+                expr.print_debug_depth(depth + 1);
+                then.print_debug_depth(depth);
             },
             Expr::IfElse(predicate, true_block, false_block) => {
                 println!("If/Else:");
-                predicate.print_debug_depth(ctx, depth + 1);
-                true_block.print_debug_depth(ctx, depth + 1);
-                false_block.print_debug_depth(ctx, depth + 1);
+                predicate.print_debug_depth(depth + 1);
+                true_block.print_debug_depth(depth + 1);
+                false_block.print_debug_depth(depth + 1);
             },
             Expr::While(predicate, body) => {
                 println!("While:");
-                predicate.print_debug_depth(ctx, depth + 1);
-                body.print_debug_depth(ctx, depth + 1);
+                predicate.print_debug_depth(depth + 1);
+                body.print_debug_depth(depth + 1);
             },
             Expr::Func(params, body) => {
                 let params = params
                     .iter()
-                    .map(|i| ctx.idents.get(**i).to_string())
+                    .map(|i| i.to_owned())
                     .collect::<Vec<_>>();
                 println!("Func: {:?}", params);
-                body.print_debug_depth(ctx, depth + 1);
+                body.print_debug_depth(depth + 1);
             },
             Expr::Call(func, args) => {
                 println!("Call:");
-                func.print_debug_depth(ctx, depth + 1);
+                func.print_debug_depth(depth + 1);
                 for arg in args.iter() {
-                    arg.print_debug_depth(ctx, depth + 1);
+                    arg.print_debug_depth(depth + 1);
                 }
             },
             Expr::Index(expr, index) => {
                 println!("Index:");
-                expr.print_debug_depth(ctx, depth + 1);
-                index.print_debug_depth(ctx, depth + 1);
+                expr.print_debug_depth(depth + 1);
+                index.print_debug_depth(depth + 1);
             },
             Expr::Field(expr, field) => {
-                println!("Field: {}", ctx.idents.get(**field).to_string());
-                expr.print_debug_depth(ctx, depth + 1);
+                println!("Field: {}", field.as_ref());
+                expr.print_debug_depth(depth + 1);
             },
             Expr::Structure(fields) => {
                 for (i, (name, expr)) in fields.iter().enumerate() {
                     if i != 0 {
                         (0..depth * 2).for_each(|_| print!("  "));
                     }
-                    println!("Field: {}", ctx.idents.get(**name).to_string());
-                    expr.print_debug_depth(ctx, depth + 1);
+                    println!("Field: {}", name.as_ref());
+                    expr.print_debug_depth(depth + 1);
                 }
             },
             Expr::List(items) => {
                 println!("List:");
                 for item in items.iter() {
-                    item.print_debug_depth(ctx, depth + 1);
+                    item.print_debug_depth(depth + 1);
                 }
             },
             Expr::ListMany(item, count) => {
                 println!("ListMany:");
-                item.print_debug_depth(ctx, depth + 1);
-                count.print_debug_depth(ctx, depth + 1);
+                item.print_debug_depth(depth + 1);
+                count.print_debug_depth(depth + 1);
             },
             Expr::Convert(expr, ty) => {
                 println!("Convert");
-                expr.print_debug_depth(ctx, depth + 1);
-                ty.print_debug_depth(ctx, depth + 1);
+                expr.print_debug_depth(depth + 1);
+                ty.print_debug_depth(depth + 1);
             },
             _ => unimplemented!(),
         }
     }
 
-    pub fn print_debug(&self, ctx: &TokenCtx) {
-        self.print_debug_depth(ctx, 0);
+    pub fn print_debug(&self) {
+        self.print_debug_depth(0);
     }
 }
 
