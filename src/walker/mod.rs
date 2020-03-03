@@ -400,10 +400,10 @@ impl<'a> AbstractMachine<'a> {
         }
     }
 
-    pub fn with_globals(mut self, globals: Vec<(String, Box<dyn Object>)>) -> Self {
-        globals.into_iter().for_each(|(ident, custom)| {
+    pub fn with_globals(mut self, globals: Vec<(String, Value<'a>)>) -> Self {
+        globals.into_iter().for_each(|(ident, value)| {
             let ident = LocalIntern::new(ident);
-            self.stack.push(Some((ident, Value::Custom(custom))))
+            self.stack.push(Some((ident, value)))
         });
 
         self

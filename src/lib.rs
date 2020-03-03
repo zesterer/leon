@@ -16,7 +16,7 @@ pub use error::{ErrorKind, Error, Thing};
 pub struct Engine;
 
 impl Engine {
-    pub fn exec<T>(&mut self, code: &str, globals: Vec<(String, Box<dyn Object>)>, f: impl FnOnce(Value) -> T) -> Result<T, Vec<Error>> {
+    pub fn exec<T>(&mut self, code: &str, globals: Vec<(String, Value)>, f: impl FnOnce(Value) -> T) -> Result<T, Vec<Error>> {
         let tokens = lex::lex(code)?;
 
         //println!("--- Tokens ---");

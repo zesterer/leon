@@ -67,7 +67,7 @@ fn main() {
     let vec3 = Engine::default()
         .exec(SCRIPT, vec!((
                 "myvec".into(),
-                Box::new(MyVec3::new(1.0, 1.0, 1.0)),
+                Value::Custom(Box::new(MyVec3::new(1.0, 1.0, 1.0))),
         )), |v| v.extract::<MyVec3>().unwrap())
         .unwrap();
 
