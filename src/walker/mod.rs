@@ -400,10 +400,17 @@ impl<'a> AbstractMachine<'a> {
         }
     }
 
-    pub fn with_globals(mut self, globals: Vec<(String, Value<'a>)>) -> Self {
+    pub fn with_globals(mut self, globals: Vec<(String, Value<'static>)>) -> Self {
         globals.into_iter().for_each(|(ident, value)| {
             let ident = LocalIntern::new(ident);
-            self.stack.push(Some((ident, value)))
+            self.stack.push(Some((ident, match value {
+                // TODO: fix lifetime issue and remove this match
+                Value::String(v) => Value::String(v),
+                Value::Number(v) => Value::Number(v),
+                Value::Bool(v) => Value::Bool(v),
+                Value::Custom(v) => Value::Custom(v),
+                _ => panic!("Unsupported as external global")
+            })))
         });
 
         self
@@ -553,6 +560,12 @@ impl<'a> AbstractMachine<'a> {
                     } else {
                         return Err(ExecError::WrongNumberOfArgs);
                     }
+                } else if let Value::Custom(x) = func {
+                    let args = args
+                        .iter()
+                        .map(|arg| self.exec(arg))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    x.call(&args)? 
                 } else {
                     return Err(ExecError::NotCallable);
                 }

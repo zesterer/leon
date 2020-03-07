@@ -8,19 +8,18 @@ mod bytecode;
 pub mod object;
 mod error;
 
-pub use walker::Value;
+pub use walker::{Value, ExecError};
 pub use object::Object;
 pub use error::{ErrorKind, Error, Thing};
 
 #[derive(Default)]
 pub struct Engine;
 
-impl Engine {
-    pub fn exec<T>(&mut self, code: &str, globals: Vec<(String, Value)>, f: impl FnOnce(Value) -> T) -> Result<T, Vec<Error>> {
-        let tokens = lex::lex(code)?;
+pub struct Ast(parse::Node<parse::Expr>);
 
-        //println!("--- Tokens ---");
-        //ctx.print_debug(&tokens);
+impl Engine {
+    pub fn exec<T>(&mut self, code: &str, globals: Vec<(String, Value<'static>)>, f: impl FnOnce(Value) -> T) -> Result<T, Vec<Error>> {
+        let tokens = lex::lex(code)?;
 
         let ast = parse::parse(&tokens).map_err(|errs| {
             for err in &errs {
@@ -36,6 +35,25 @@ impl Engine {
             .with_globals(globals)
             .exec(&ast)
             .map(f)
-            .map_err(|_| Vec::new()) // TODO
+            .map_err(|e| { println!("Error: {:?}", e); Vec::new() }) // TODO
+    }
+    pub fn parse(code: &str) -> Result<Ast, Vec<Error>> {
+        let tokens = lex::lex(code)?;
+
+        let ast = parse::parse(&tokens).map_err(|errs| {
+            for err in &errs {
+                println!("Location: {:?}", err.region.map(|region| region.in_context(code)));
+            }
+            errs
+        })?;
+
+        Ok(Ast(ast))
+    }
+    pub fn exec_parsed<T>(&mut self, ast: &Ast, globals: Vec<(String, Value<'static>)>, f: impl FnOnce(Value) -> T) -> Result<T, Vec<Error>> {
+        walker::AbstractMachine::new()
+            .with_globals(globals)
+            .exec(&ast.0)
+            .map(f)
+            .map_err(|e| { println!("Error: {:?}", e); Vec::new() }) // TODO
     }
 }

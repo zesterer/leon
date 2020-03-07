@@ -48,5 +48,5 @@ pub trait Object: std::fmt::Debug + ObjectHelper + 'static {
     fn index<'a>(&self, index: &Value<'a>) -> Result<Value<'a>, InvalidOperation> { Err("Not indexable!".into()) }
     fn index_mutate<'a, 'b>(&mut self, index: &Value, f: Box<dyn FnOnce(&mut Value<'a>) -> Result<(), ExecError> +'b>) -> Result<(), ExecError> { Err(InvalidOperation("Not index mutable!".into()).into()) }
     fn field<'a>(&self, field: &str) -> Result<Value<'a>, InvalidOperation> { Err("Not fieldable!".into()) }
-    fn field_mutate<'a, 'b>(&self, field: &str, f: Box<dyn FnOnce(&mut Value<'a>) -> Result<(), ExecError> +'b>) -> Result<(), ExecError> { Err(InvalidOperation("Not field mutable!".into()).into()) }
+    fn field_mutate<'a, 'b>(&mut self, field: &str, f: Box<dyn FnOnce(&mut Value<'a>) -> Result<(), ExecError> +'b>) -> Result<(), ExecError> { Err(InvalidOperation("Not field mutable!".into()).into()) }
 }
